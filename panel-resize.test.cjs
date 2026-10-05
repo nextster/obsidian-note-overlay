@@ -17,283 +17,243 @@ class Target extends EventTarget {
   listenerCount() { return [...this.listeners.values()].reduce((count, handlers) => count + handlers.size, 0); }
 }
 
-function harness({ minimum = [420, 300], maximum = [0, 0], existingReady = false, tabClick } = {}) {
-  const doc = new Target();
+const modifiers = { shiftKey: true, altKey: true };
+
+function harness({ minimum = [420, 300], maximum = [0, 0], existingReady = false } = {}) {
   const domWindow = new Target();
   const classes = new Set(existingReady ? ['note-panel-modifier-resize-ready'] : []);
-  const captures = new Set();
   const styles = [];
-  const frames = new Map();
-  const timers = new Map();
+  const intervals = new Map();
   let nextId = 0;
-  doc.body = {
-    classList: {
+  const doc = {
+    body: { classList: {
       contains: name => classes.has(name),
       toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); },
-    },
-    setPointerCapture: id => captures.add(id),
-    releasePointerCapture: id => captures.delete(id),
+    } },
+    head: { appendChild: style => styles.push(style) },
+    createElement: () => ({ textContent: '', remove() { styles.splice(styles.indexOf(this), 1); } }),
   };
-  doc.head = { appendChild: style => styles.push(style) };
-  doc.createElement = () => ({ textContent: '', remove() { styles.splice(styles.indexOf(this), 1); } });
   domWindow.document = doc;
-  domWindow.requestAnimationFrame = fn => { const id = ++nextId; frames.set(id, fn); return id; };
-  domWindow.cancelAnimationFrame = id => frames.delete(id);
-  domWindow.setTimeout = fn => { const id = ++nextId; timers.set(id, fn); return id; };
-  domWindow.clearTimeout = id => timers.delete(id);
+  domWindow.setInterval = (fn, delay) => { assert.equal(delay, 16); const id = ++nextId; intervals.set(id, fn); return id; };
+  domWindow.clearInterval = id => intervals.delete(id);
   const native = new EventEmitter();
   native.bounds = { x: -80, y: 30, width: 700, height: 560 };
-  native.sizes = [];
+  native.focused = true;
+  native.visible = true;
+  native.changes = [];
   native.getBounds = () => ({ ...native.bounds });
   native.getMinimumSize = () => minimum;
   native.getMaximumSize = () => maximum;
   native.isDestroyed = () => Boolean(native.destroyed);
-  native.setSize = (width, height, animate) => {
-    native.sizes.push([width, height, animate]);
-    Object.assign(native.bounds, { width, height });
+  native.isFocused = () => native.focused;
+  native.isVisible = () => native.visible;
+  native.setBounds = (bounds, animate) => {
+    native.changes.push([{ ...bounds }, animate]);
+    native.bounds = { ...bounds };
   };
+  const cursor = { x: 100, y: 100 };
   const errors = [];
-  if (tabClick) doc.addEventListener('click', tabClick, true);
-  const interaction = installResize(domWindow, native, error => errors.push(error));
-  const event = (target, name, fields = {}) => {
+  let cursorReads = 0;
+  const options = { getCursor: () => { cursorReads++; return cursor; } };
+  const interaction = installResize(domWindow, native, error => errors.push(error), options);
+  const event = (name, fields = {}) => {
     const value = new Event(name, { cancelable: true });
-    Object.assign(value, { pointerId: 7, button: 0, detail: 1, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, screenX: 100, screenY: 100 }, fields);
-    if (target === doc) domWindow.dispatchEvent(value);
-    if (!value.cancelBubble) target.dispatchEvent(value);
+    Object.assign(value, { ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }, fields);
+    domWindow.dispatchEvent(value);
     return value;
   };
-  const run = queue => { const pending = [...queue.values()]; queue.clear(); for (const fn of pending) fn(); };
-  return { doc, domWindow, native, classes, captures, styles, frames, timers, errors, interaction, event,
-    frame: () => run(frames), expire: () => run(timers) };
+  const start = () => {
+    event('keydown', { shiftKey: true, key: 'Shift' });
+    event('keydown', { ...modifiers, key: 'Alt' });
+  };
+  const tick = () => { for (const fn of [...intervals.values()]) fn(); };
+  return { doc, domWindow, native, classes, styles, intervals, cursor, errors, options, interaction, event, start, tick,
+    cursorReads: () => cursorReads };
 }
 
-const modifiers = { shiftKey: true, altKey: true };
-
-test('resizing anchors the top-left corner and respects each native limit', () => {
+test('horizontal resizing is symmetric around the initial center while its top remains fixed', () => {
   const bounds = { x: -80, y: 30, width: 700, height: 560 };
-  assert.deepEqual(resizeBounds(bounds, 400, -800, [420, 300], [900, 1000]), { x: -80, y: 30, width: 900, height: 300 });
-  assert.deepEqual(resizeBounds(bounds, -800, 2000, [0, 0], [0, 0]), { x: -80, y: 30, width: 1, height: 2560 });
-  assert.deepEqual(resizeBounds(bounds, -800, -800), { x: -80, y: 30, width: 420, height: 300 });
+  assert.deepEqual(resizeBounds(bounds, 50, 40), { x: -130, y: 30, width: 800, height: 600 });
+  assert.deepEqual(resizeBounds(bounds, -50, -40), { x: -30, y: 30, width: 600, height: 520 });
   assert.deepEqual(bounds, { x: -80, y: 30, width: 700, height: 560 });
 });
 
-test('ordinary editor input and modified non-left clicks remain untouched', () => {
+test('native limits clamp both dimensions without moving the center or top', () => {
+  const bounds = { x: -80, y: 30, width: 700, height: 560 };
+  assert.deepEqual(resizeBounds(bounds, 400, -800, [420, 300], [900, 1000]), { x: -180, y: 30, width: 900, height: 300 });
+  assert.deepEqual(resizeBounds(bounds, -800, 2000, [0, 0], [0, 0]), { x: 270, y: 30, width: 1, height: 2560 });
+  assert.deepEqual(resizeBounds(bounds, -800, -800), { x: 60, y: 30, width: 420, height: 300 });
+  assert.deepEqual(resizeBounds({ x: 5, y: 15, width: 701, height: 561 }, 0.3, 0.4), { x: 5, y: 15, width: 702, height: 561 });
+});
+
+test('the key chord starts without a click and polls the global cursor outside the panel', () => {
   const h = harness();
-  for (const fields of [{}, { shiftKey: true }, { altKey: true }, { ...modifiers, ctrlKey: true }, { ...modifiers, metaKey: true }, { ...modifiers, button: 2 }]) {
-    assert.equal(h.event(h.doc, 'pointerdown', fields).defaultPrevented, false);
-    assert.equal(h.event(h.doc, 'pointerup', fields).defaultPrevented, false);
-    assert.equal(h.event(h.doc, 'click', fields).defaultPrevented, false);
+  assert.equal(h.cursorReads(), 0);
+  h.start();
+  assert.equal(h.intervals.size, 1);
+  assert.equal(h.cursorReads(), 1);
+  assert.equal(h.classes.has('note-panel-modifier-resizing'), true);
+  // No DOM mouse event is sent: only the screen cursor provider changes.
+  Object.assign(h.cursor, { x: 1100, y: -200 });
+  h.tick();
+  assert.deepEqual(h.native.changes, [[{ x: -1080, y: 30, width: 2700, height: 300 }, false]]);
+  h.tick();
+  assert.equal(h.native.changes.length, 1);
+  h.event('keyup', { shiftKey: true, key: 'Alt' });
+  assert.equal(h.intervals.size, 0);
+  assert.equal(h.classes.size, 0);
+  Object.assign(h.cursor, { x: 2000, y: 2000 });
+  h.tick();
+  assert.equal(h.native.changes.length, 1);
+  h.interaction.dispose();
+});
+
+test('key repeat keeps the original cursor anchor and does not add polling loops', () => {
+  const h = harness();
+  h.start();
+  Object.assign(h.cursor, { x: 150, y: 140 });
+  h.tick();
+  h.event('keydown', { ...modifiers, key: 'Alt', repeat: true });
+  Object.assign(h.cursor, { x: 180, y: 160 });
+  h.tick();
+  assert.equal(h.intervals.size, 1);
+  assert.deepEqual(h.native.changes, [
+    [{ x: -130, y: 30, width: 800, height: 600 }, false],
+    [{ x: -160, y: 30, width: 860, height: 620 }, false],
+  ]);
+  h.interaction.dispose();
+});
+
+test('ordinary editor keys, clicks, and mouse events remain untouched', () => {
+  const h = harness();
+  let editorEvents = 0;
+  for (const name of ['keydown', 'pointerdown', 'pointermove', 'pointerup', 'click', 'contextmenu']) {
+    h.domWindow.addEventListener(name, () => { editorEvents++; });
   }
-  assert.equal(h.captures.size, 0);
-  assert.deepEqual(h.native.sizes, []);
+  for (const fields of [{}, { shiftKey: true }, { altKey: true }, { ...modifiers, ctrlKey: true }, { ...modifiers, metaKey: true }]) {
+    assert.equal(h.event('keydown', fields).defaultPrevented, false);
+  }
+  assert.equal(h.intervals.size, 0);
+  h.start();
+  for (const name of ['pointerdown', 'pointermove', 'pointerup', 'click', 'contextmenu']) {
+    assert.equal(h.event(name, { ...modifiers, button: 0, buttons: 1 }).defaultPrevented, false);
+  }
+  assert.equal(editorEvents, 12);
+  assert.deepEqual(h.native.changes, []);
   h.interaction.dispose();
 });
 
-test('a modified drag anywhere batches moves and flushes its final outside position', () => {
+test('focus loss stops polling and key repeat cannot resume without a new chord', () => {
   const h = harness();
-  h.event(h.domWindow, 'keydown', { ...modifiers, key: 'Alt' });
-  assert.equal(h.classes.has('note-panel-modifier-resize-ready'), true);
-  assert.match(h.styles[0].textContent, /-webkit-app-region: no-drag !important/);
-  assert.equal(h.event(h.doc, 'pointerdown', modifiers).defaultPrevented, true);
-  assert.deepEqual([...h.captures], [7]);
-  h.event(h.doc, 'pointermove', { ...modifiers, screenX: 200, screenY: 160 });
-  h.event(h.doc, 'pointermove', { ...modifiers, screenX: 300, screenY: 200 });
-  assert.equal(h.frames.size, 1);
-  assert.deepEqual(h.native.sizes, []);
-  h.frame();
-  assert.deepEqual(h.native.sizes, [[900, 660, false]]);
-  // Pointer capture delivers this even when the pointer has left the panel.
-  h.event(h.doc, 'pointerup', { ...modifiers, screenX: 400, screenY: 250 });
-  assert.deepEqual(h.native.sizes, [[900, 660, false], [1000, 710, false]]);
-  assert.deepEqual(h.native.bounds, { x: -80, y: 30, width: 1000, height: 710 });
-  assert.equal(h.captures.size, 0);
-  assert.equal(h.event(h.doc, 'click', modifiers).defaultPrevented, true);
-  assert.equal(h.event(h.doc, 'contextmenu', modifiers).defaultPrevented, true);
-  assert.equal(h.event(h.doc, 'pointerdown').defaultPrevented, false);
-  assert.equal(h.event(h.doc, 'click').defaultPrevented, false);
+  h.start();
+  Object.assign(h.cursor, { x: 200, y: 200 });
+  h.native.focused = false;
+  h.tick();
+  assert.equal(h.intervals.size, 0);
+  assert.equal(h.classes.size, 0);
+  assert.deepEqual(h.native.changes, []);
+  h.native.focused = true;
+  h.event('keydown', { ...modifiers, key: 'Alt', repeat: true });
+  h.event('keydown', { ...modifiers, key: 'a' });
+  assert.equal(h.intervals.size, 0);
+  h.start();
+  Object.assign(h.cursor, { x: 240, y: 230 });
+  h.tick();
+  assert.deepEqual(h.native.changes, [[{ x: -120, y: 30, width: 780, height: 590 }, false]]);
   h.interaction.dispose();
 });
 
-test('releasing a modifier stops size changes while consuming the original drag click', () => {
+test('a hidden or unfocused panel never starts and visibility loss cancels an active resize', () => {
   const h = harness();
-  h.event(h.doc, 'pointerdown', modifiers);
-  h.event(h.doc, 'pointermove', { ...modifiers, screenX: 160, screenY: 140 });
-  h.event(h.domWindow, 'keyup', { shiftKey: true, key: 'Alt' });
-  assert.deepEqual(h.native.sizes, [[760, 600, false]]);
-  assert.equal(h.classes.has('note-panel-modifier-resizing'), false);
-  assert.equal(h.classes.has('note-panel-modifier-resize-ready'), false);
-  h.event(h.doc, 'pointermove', { shiftKey: true, screenX: 500, screenY: 500 });
-  h.event(h.doc, 'pointerup', { shiftKey: true, screenX: 500, screenY: 500 });
-  assert.deepEqual(h.native.sizes, [[760, 600, false]]);
-  assert.equal(h.captures.size, 0);
-  assert.equal(h.event(h.doc, 'click').defaultPrevented, true);
-  h.expire();
-  assert.equal(h.event(h.doc, 'contextmenu').defaultPrevented, false);
+  h.native.focused = false;
+  h.start();
+  assert.equal(h.intervals.size, 0);
+  assert.equal(h.cursorReads(), 0);
+  h.native.focused = true;
+  h.native.visible = false;
+  h.start();
+  assert.equal(h.intervals.size, 0);
+  h.native.visible = true;
+  h.start();
+  h.native.visible = false;
+  Object.assign(h.cursor, { x: 500, y: 500 });
+  h.tick();
+  assert.equal(h.intervals.size, 0);
+  assert.equal(h.classes.size, 0);
+  assert.deepEqual(h.native.changes, []);
   h.interaction.dispose();
 });
 
-test('canceled pointers finish pending size changes and then allow ordinary editing', () => {
-  const h = harness({ maximum: [750, 600] });
-  h.event(h.doc, 'pointerdown', modifiers);
-  h.event(h.doc, 'pointermove', { ...modifiers, screenX: 400, screenY: 400 });
-  h.event(h.doc, 'pointercancel', modifiers);
-  assert.deepEqual(h.native.sizes, [[750, 600, false]]);
-  assert.equal(h.captures.size, 0);
-  assert.equal(h.classes.has('note-panel-modifier-resizing'), false);
-  h.event(h.doc, 'pointerdown');
-  assert.equal(h.event(h.doc, 'click').defaultPrevented, false);
-  h.frame();
-  assert.equal(h.native.sizes.length, 1);
-  h.interaction.dispose();
-});
-
-test('focus loss, native hiding, and explicit cancellation reset the modifier mode', () => {
+test('keyup, DOM/native blur, native hide, and explicit cancellation stop the gesture immediately', () => {
   const h = harness();
-  const resetters = [() => h.event(h.domWindow, 'blur'), () => h.native.emit('hide'), () => h.interaction.cancel()];
+  const resetters = [
+    () => h.event('keyup', { altKey: true, key: 'Shift' }),
+    () => h.event('blur'),
+    () => h.native.emit('blur'),
+    () => h.native.emit('hide'),
+    () => h.interaction.cancel(),
+  ];
   for (const reset of resetters) {
-    h.event(h.doc, 'pointerdown', modifiers);
-    h.event(h.doc, 'pointermove', { ...modifiers, screenX: 120, screenY: 130 });
+    h.start();
+    assert.equal(h.intervals.size, 1);
     reset();
-    assert.equal(h.captures.size, 0);
+    assert.equal(h.intervals.size, 0);
     assert.equal(h.classes.size, 0);
-    assert.equal(h.frames.size, 0);
-    assert.equal(h.timers.size, 0);
-    assert.equal(h.event(h.doc, 'click').defaultPrevented, false);
   }
+  h.interaction.dispose();
+});
+
+test('native close disposes every listener and style before a replacement is installed', () => {
+  const h = harness();
+  h.start();
   h.native.destroyed = true;
   h.native.emit('closed');
-  assert.deepEqual(h.errors, []);
+  assert.equal(h.domWindow.listenerCount(), 0);
+  assert.equal(h.native.listenerCount('blur'), 0);
+  assert.equal(h.native.listenerCount('hide'), 0);
+  assert.equal(h.native.listenerCount('closed'), 0);
+  assert.equal(h.intervals.size, 0);
+  assert.equal(h.styles.length, 0);
+  assert.equal(h.classes.size, 0);
+  h.native.destroyed = false;
+  const replacement = installResize(h.domWindow, h.native, error => h.errors.push(error), h.options);
+  h.start();
+  Object.assign(h.cursor, { x: 150, y: 140 });
+  h.tick();
+  assert.deepEqual(h.native.changes, [[{ x: -130, y: 30, width: 800, height: 600 }, false]]);
+  replacement.dispose();
   h.interaction.dispose();
+  assert.equal(h.domWindow.listenerCount(), 0);
+  assert.equal(h.styles.length, 0);
 });
 
-test('disposal is repeatable, preserves existing styles, and removes every listener', () => {
+test('repeat disposal preserves existing classes and user styles', () => {
   const h = harness({ existingReady: true });
   const userStyle = { textContent: 'body { cursor: text; }' };
   h.styles.push(userStyle);
-  h.event(h.doc, 'pointerdown', modifiers);
-  h.event(h.doc, 'pointermove', { ...modifiers, screenX: 150, screenY: 150 });
+  h.start();
   h.interaction.dispose();
   h.interaction.dispose();
   assert.deepEqual([...h.classes], ['note-panel-modifier-resize-ready']);
   assert.deepEqual(h.styles, [userStyle]);
-  assert.equal(h.captures.size, 0);
-  assert.equal(h.doc.listenerCount(), 0);
   assert.equal(h.domWindow.listenerCount(), 0);
+  assert.equal(h.native.listenerCount('blur'), 0);
   assert.equal(h.native.listenerCount('hide'), 0);
   assert.equal(h.native.listenerCount('closed'), 0);
-  assert.equal(h.frames.size, 0);
-  assert.equal(h.timers.size, 0);
-  assert.equal(h.event(h.doc, 'pointerdown', modifiers).defaultPrevented, false);
+  assert.equal(h.intervals.size, 0);
 });
 
-test('native errors terminate the gesture and are reported once', () => {
+test('native bounds failures stop polling and report the error once', () => {
   const h = harness();
   const error = new Error('Native panel became unavailable');
-  h.native.setSize = () => { throw error; };
-  h.event(h.doc, 'pointerdown', modifiers);
-  h.event(h.doc, 'pointermove', { ...modifiers, screenX: 200, screenY: 200 });
-  h.frame();
+  h.native.setBounds = () => { throw error; };
+  h.start();
+  Object.assign(h.cursor, { x: 200, y: 200 });
+  h.tick();
   assert.deepEqual(h.errors, [error]);
-  assert.equal(h.captures.size, 0);
+  assert.equal(h.intervals.size, 0);
   assert.equal(h.classes.size, 0);
-  h.event(h.doc, 'pointermove', { ...modifiers, screenX: 300, screenY: 300 });
-  h.frame();
+  h.tick();
   assert.deepEqual(h.errors, [error]);
-  h.interaction.dispose();
-});
-
-test('a resize begun on a tab blocks its existing document-level click action', () => {
-  let selectedTabs = 0;
-  const h = harness({ tabClick: () => { selectedTabs++; } });
-  h.event(h.doc, 'pointerdown', modifiers);
-  h.event(h.doc, 'pointermove', { ...modifiers, screenX: 160, screenY: 140 });
-  h.event(h.doc, 'pointerup', { ...modifiers, screenX: 160, screenY: 140 });
-  h.event(h.doc, 'click', modifiers);
-  assert.equal(selectedTabs, 0);
-  h.event(h.doc, 'pointerdown');
-  h.event(h.doc, 'click');
-  assert.equal(selectedTabs, 1);
-  h.interaction.dispose();
-});
-
-test('modified resize input cannot reach a document-level editor pointer handler', () => {
-  const h = harness();
-  let editorInput = 0;
-  h.doc.addEventListener('pointerdown', () => { editorInput++; }, true);
-  h.event(h.doc, 'pointerdown', modifiers);
-  h.event(h.doc, 'pointerup', modifiers);
-  assert.equal(editorInput, 0);
-  h.event(h.doc, 'pointerdown');
-  assert.equal(editorInput, 1);
-  h.interaction.dispose();
-});
-
-test('closing a native panel removes its interaction and allows a clean replacement', () => {
-  const h = harness();
-  h.event(h.doc, 'pointerdown', { ...modifiers, buttons: 1 });
-  h.event(h.doc, 'pointermove', { ...modifiers, buttons: 1, screenX: 160, screenY: 140 });
-  h.native.destroyed = true;
-  h.native.emit('closed');
-  assert.equal(h.domWindow.listenerCount(), 0);
-  assert.equal(h.native.listenerCount('hide'), 0);
-  assert.equal(h.native.listenerCount('closed'), 0);
-  assert.equal(h.styles.length, 0);
-  assert.equal(h.classes.size, 0);
-  assert.equal(h.captures.size, 0);
-  assert.equal(h.frames.size, 0);
-  assert.equal(h.timers.size, 0);
-  assert.equal(h.event(h.doc, 'pointerdown', modifiers).defaultPrevented, false);
-  assert.deepEqual(h.native.sizes, []);
-
-  const replacement = new EventEmitter();
-  replacement.getBounds = () => ({ x: 30, y: 40, width: 700, height: 560 });
-  replacement.getMinimumSize = () => [420, 300];
-  replacement.getMaximumSize = () => [0, 0];
-  replacement.isDestroyed = () => false;
-  replacement.sizes = [];
-  replacement.setSize = (...size) => replacement.sizes.push(size);
-  const interaction = installResize(h.domWindow, replacement, error => h.errors.push(error));
-  h.event(h.doc, 'pointerdown', modifiers);
-  h.event(h.doc, 'pointerup', { ...modifiers, screenX: 150, screenY: 130 });
-  assert.deepEqual(replacement.sizes, [[750, 590, false]]);
-  assert.deepEqual(h.native.sizes, []);
-  assert.deepEqual(h.errors, []);
-  interaction.dispose();
-  h.interaction.dispose();
-  assert.equal(h.domWindow.listenerCount(), 0);
-  assert.equal(h.styles.length, 0);
-});
-
-test('releasing left while right stays down stops resizing and consumes the remaining gesture', () => {
-  const h = harness();
-  h.event(h.doc, 'pointerdown', { ...modifiers, buttons: 1 });
-  h.event(h.doc, 'pointermove', { ...modifiers, buttons: 3, screenX: 140, screenY: 120 });
-  h.event(h.doc, 'pointermove', { ...modifiers, buttons: 2, screenX: 200, screenY: 180 });
-  assert.deepEqual(h.native.sizes, [[740, 580, false]]);
-  assert.equal(h.classes.has('note-panel-modifier-resizing'), false);
-  assert.deepEqual([...h.captures], [7]);
-  h.event(h.doc, 'pointermove', { ...modifiers, buttons: 2, screenX: 400, screenY: 400 });
-  h.event(h.doc, 'pointerup', { ...modifiers, button: 2, buttons: 0, screenX: 400, screenY: 400 });
-  assert.deepEqual(h.native.sizes, [[740, 580, false]]);
-  assert.equal(h.captures.size, 0);
-  assert.equal(h.event(h.doc, 'auxclick', { ...modifiers, button: 2, buttons: 0 }).defaultPrevented, true);
-  h.event(h.doc, 'pointerdown', { buttons: 1 });
-  assert.equal(h.event(h.doc, 'click', { buttons: 0 }).defaultPrevented, false);
-  h.interaction.dispose();
-});
-
-test('a move with no pressed buttons recovers from a missed pointerup', () => {
-  const h = harness();
-  h.event(h.doc, 'pointerdown', { ...modifiers, buttons: 1 });
-  h.event(h.doc, 'pointermove', { ...modifiers, buttons: 1, screenX: 130, screenY: 140 });
-  h.event(h.doc, 'pointermove', { ...modifiers, buttons: 0, screenX: 500, screenY: 500 });
-  assert.deepEqual(h.native.sizes, [[730, 600, false]]);
-  assert.equal(h.captures.size, 0);
-  assert.equal(h.classes.has('note-panel-modifier-resizing'), false);
-  h.event(h.doc, 'pointermove', { ...modifiers, buttons: 0, screenX: 600, screenY: 600 });
-  h.frame();
-  assert.deepEqual(h.native.sizes, [[730, 600, false]]);
-  h.expire();
-  assert.equal(h.event(h.doc, 'click').defaultPrevented, false);
   h.interaction.dispose();
 });

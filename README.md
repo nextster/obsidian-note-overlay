@@ -4,7 +4,7 @@ A macOS floating panel for Obsidian's real Markdown editor and Live Preview. Kee
 
 - Native tabs support multiple notes in the same panel.
 - The compact note-picker icon replaces the two large toolbar buttons.
-- Hold **Shift+Option** and drag with the left mouse button anywhere inside the panel to resize it. Drag right/down to enlarge or left/up to shrink; the top-left corner stays in place.
+- While the panel is focused, hold **Shift+Option** and move the mouse to resize it, without clicking. The pointer can be anywhere on screen. Move right/down to enlarge or left/up to shrink; the width changes symmetrically around the panel's center and the top edge stays in place. Release either key or switch focus to stop.
 - Escape keeps Obsidian's normal editor, picker, and menu behavior. Use the global shortcut to hide the panel and save its open editors.
 - Closing Obsidian's main window keeps it hidden in the running app, so the panel can still open. **Quit Obsidian** exits the app and its plugin.
 - The panel remembers its notes, selected tab, and window bounds. Panel windows are excluded from Obsidian's saved workspace layout.
@@ -17,7 +17,7 @@ Download the installation ZIP from [Releases](https://github.com/nextster/obsidi
 
 The internal plugin ID stays `panel-micro-demo` to preserve settings from the earlier local prototype. When updating an existing installation, replace the runtime files and keep its `data.json`.
 
-Restart Obsidian after updating the native bridge or main-process helpers. JavaScript-only editor changes can use a plugin reload.
+Restart Obsidian after updating the native bridge or CommonJS helpers. Changes limited to `main.js` can use a plugin reload.
 
 The plugin is distributed as a complete ZIP because it also needs CommonJS helpers and a native `.node` module. Copying just `main.js` and `manifest.json` is insufficient.
 
@@ -61,11 +61,11 @@ The installer copies only runtime files, preserves settings, and does not enable
 
 ## Architecture and local control
 
-`main.js` opens Obsidian popout workspace leaves and uses the normal Markdown view save lifecycle. `popup-main.cjs` temporarily wraps the popup handler to create an Electron panel while preserving Obsidian's web preferences. `panel_bridge.mm` is a small AppKit Node-API addon loaded in Electron's main process, which keeps the panel available across macOS Spaces and fullscreen applications.
+`main.js` opens Obsidian popout workspace leaves and uses the normal Markdown view save lifecycle. `popup-main.cjs` temporarily wraps the popup handler to create an Electron panel while preserving Obsidian's web preferences. `panel_bridge.mm` is a small AppKit Node-API addon loaded in Electron's main process, which keeps the panel available across macOS Spaces and fullscreen applications. `panel-resize.cjs` samples Electron's global cursor position only while the resize shortcut is held and the panel is focused.
 
 The local HTTP server binds to `127.0.0.1:51235`. It supports `/toggle`, `/hide`, `/status`, and POST `/open` with `{"path":"existing-note.md"}`. It does not expose note text or execute request-supplied code. Local control is intended for trusted software on the same computer; no remote service is involved.
 
-References: [Electron BrowserWindow](https://www.electronjs.org/docs/latest/api/browser-window), [Electron app lifecycle](https://www.electronjs.org/docs/latest/api/app), and [Node-API](https://nodejs.org/api/n-api.html).
+References: [Electron BrowserWindow](https://www.electronjs.org/docs/latest/api/browser-window), [Electron screen](https://www.electronjs.org/docs/latest/api/screen#screengetcursorscreenpoint), [Electron app lifecycle](https://www.electronjs.org/docs/latest/api/app), and [Node-API](https://nodejs.org/api/n-api.html).
 
 ## Verified behavior
 
@@ -76,7 +76,7 @@ Verified on 2026-10-05 with Obsidian 1.13.7, Electron 43.3.0, and Apple Silicon 
 - Sent native Cmd+T and Cmd+W input to verify tab behavior. Escape keeps the panel open and dismisses its note picker.
 - Checked rapid toggles, native panel closure, plugin reload, and tab restoration after an app restart.
 - Confirmed a normal quit exits the process with the panel present.
-- Resized with Shift+Option from the content and tab strip, checked the fixed top-left corner and minimum dimensions, and verified release stops resizing without triggering a tab action.
+- Resized without clicks using native Shift+Option key input and real system cursor movement outside the panel. Checked symmetric horizontal resizing, the fixed top edge, native minimum dimensions, and cancellation on key release, focus loss, and hiding. Returning focus does not resume a stale gesture.
 
 ## Build an installation archive
 
@@ -85,6 +85,6 @@ npm test
 npm run package
 ```
 
-The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.3.0.zip`. CI runs JavaScript regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
+The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.4.0.zip`. CI runs JavaScript regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
 
-To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.3.0`. The release workflow builds and publishes the ZIP after tests pass.
+To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.4.0`. The release workflow builds and publishes the ZIP after tests pass.

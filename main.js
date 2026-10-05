@@ -168,7 +168,9 @@ module.exports = class PanelMicroDemo extends Plugin {
       this.installPanelKeys();
       const {installResize}=require(path.join(folder,'panel-resize.cjs'));
       this.resizeInteraction?.dispose();
-      this.resizeInteraction=installResize(this.panelWindow,w,error=>this.report(error));
+      this.resizeInteraction=installResize(this.panelWindow,w,error=>this.report(error),{
+        getCursor:()=>remote.screen.getCursorScreenPoint()
+      });
     }finally{this.restoring=false;}
     this.sessionReady=true;
     await this.persistSession();
