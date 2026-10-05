@@ -7,6 +7,7 @@ A macOS floating panel for Obsidian's real Markdown editor and Live Preview. Kee
 - While the panel is focused, hold **Option** and move the mouse to move the panel, without clicking. Its size stays fixed. The pointer can be anywhere on screen.
 - While the panel is focused, hold **Shift+Option** and move the mouse to resize it, without clicking. The pointer can be anywhere on screen. The corner nearest to the pointer when the shortcut is pressed follows the mouse; the opposite corner stays fixed.
 - Press or release Shift while holding Option to switch between moving and resizing without a jump. Release Option or switch focus to stop both modes.
+- Opening a note into the hidden panel through Obsidian reveals the panel, including reopening the same note.
 - Escape keeps Obsidian's normal editor, picker, and menu behavior. Use the global shortcut to hide the panel and save its open editors.
 - Closing Obsidian's main window keeps it hidden in the running app, so the panel can still open. **Quit Obsidian** exits the app and its plugin.
 - The panel remembers its notes, selected tab, and window bounds. Panel windows are excluded from Obsidian's saved workspace layout.
@@ -80,6 +81,7 @@ Verified on 2026-10-05 with Obsidian 1.13.7, Electron 43.3.0, and Apple Silicon 
 - Confirmed a normal quit exits the process with the panel present.
 - Resized without clicks using native Shift+Option key input and real system cursor movement outside the panel. Checked all four nearest corners, their fixed opposite corners, native minimum dimensions, and selection staying fixed after crossing the window center. Reversing after reaching minimum size keeps the original anchor. Key release, focus loss, and hiding cancel resizing; returning focus does not resume a stale gesture.
 - Moved the panel with native Option key input and real system cursor movement outside the panel, preserving its size. Checked both modifier press orders, move/resize switching without a jump, focus and hide cancellation, and a fresh Option press after a key release outside the focused panel.
+- Opened notes through the official Obsidian CLI into a hidden panel and verified it appears for both a different note and the same note. Checked main-window and background opens stay isolated, and an older delayed open cannot undo a newer hide.
 
 ## Build an installation archive
 
@@ -88,6 +90,6 @@ npm test
 npm run package
 ```
 
-The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.5.0.zip`. CI runs JavaScript regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
+The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.5.1.zip`. CI runs JavaScript regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
 
-To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.5.0`. The release workflow builds and publishes the ZIP after tests pass.
+To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.5.1`. The release workflow builds and publishes the ZIP after tests pass.

@@ -1,4 +1,4 @@
-const { Plugin, Notice, FuzzySuggestModal, TFile, Scope, setIcon } = require('obsidian');
+const { Plugin, Notice, FuzzySuggestModal, TFile, WorkspaceLeaf, Scope, setIcon } = require('obsidian');
 const http = require('node:http');
 const path = require('node:path');
 
@@ -31,6 +31,7 @@ module.exports = class PanelMicroDemo extends Plugin {
     this.addCommand({id:'toggle',name:'Toggle note panel',callback:()=>this.toggle().catch(e=>this.report(e))});
     this.addCommand({id:'choose-note',name:'Choose note in panel',callback:()=>this.openPicker().catch(e=>this.report(e))});
     this.addCommand({id:'new-tab',name:'New tab in note panel',callback:()=>this.newTab(true).catch(e=>this.report(e))});
+    this.installPanelOpenHook();
     this.registerEvent(workspace.on('file-open',()=>this.queueSessionSave()));
     this.registerEvent(workspace.on('active-leaf-change',leaf=>{
       if(this.getPanelLeaves().includes(leaf)) {
@@ -76,6 +77,29 @@ module.exports = class PanelMicroDemo extends Plugin {
     const leaves=[];
     const walk=node=>{if(!node)return;if(node.type==='leaf')leaves.push(node);else node.children?.forEach(walk);};
     walk(this.panelContainer);return leaves;
+  }
+  installPanelOpenHook(){
+    if(this.leafOpenHook)return;
+    if(typeof WorkspaceLeaf?.prototype?.openFile!=='function')throw new Error('Obsidian WorkspaceLeaf.openFile is unavailable');
+    const plugin=this,original=WorkspaceLeaf.prototype.openFile;
+    this.originalLeafOpenFile=original;
+    this.leafOpenHook=async function(...args){
+      const [file,options]=args;
+      const active=options?.active??(plugin.app.workspace.activeLeaf===this);
+      const eligible=!plugin.unloading&&!plugin.restoring&&plugin.sessionReady!==false&&file instanceof TFile&&file.extension==='md'&&active&&plugin.getPanelLeaves().includes(this);
+      const generation=plugin.hideGeneration||0;
+      const result=await original.apply(this,args);
+      // Do not await the action queue: a plugin action can itself await openFile.
+      if(eligible)void plugin.runAction(()=>plugin.revealOpenedPanelLeaf(this,file,options,generation)).catch(error=>plugin.report(error));
+      return result;
+    };
+    WorkspaceLeaf.prototype.openFile=this.leafOpenHook;
+  }
+  revealOpenedPanelLeaf(leaf,file,options,generation){
+    if(this.unloading||this.restoring||this.sessionReady===false||generation!==(this.hideGeneration||0)||options?.active===false)return;
+    if(!(file instanceof TFile)||file.extension!=='md'||this.app.workspace.activeLeaf!==leaf||!this.getPanelLeaves().includes(leaf)||leaf.view?.file!==file)return;
+    const panel=this.panel;
+    if(panel&&!panel.isDestroyed()&&!panel.isVisible())this.showPanel();
   }
   activePanelLeaf(){
     const leaves=this.getPanelLeaves();
@@ -283,9 +307,10 @@ module.exports = class PanelMicroDemo extends Plugin {
   showPanel(){if(this.unloading)return;this.panel.showInactive();this.native.inspect(this.panel.getNativeWindowHandle(),true);}
   async saveEditor(){for(const leaf of this.getPanelLeaves())if(leaf.view?.save)await leaf.view.save();}
   hidePanel(){return this.runAction(()=>this._hidePanel());}
-  async _hidePanel(){this.resizeInteraction?.cancel();this.picker?.close();await this.saveEditor();await this.persistSession();if(this.panel&&!this.panel.isDestroyed())this.panel.hide();}
+  async _hidePanel(){this.hideGeneration=(this.hideGeneration||0)+1;this.resizeInteraction?.cancel();this.picker?.close();await this.saveEditor();await this.persistSession();if(this.panel&&!this.panel.isDestroyed())this.panel.hide();}
   onunload(){
     this.unloading=true;clearTimeout(this.boundsTimer);clearTimeout(this.sessionTimer);this.server?.close();try{this.popup?.disarm(this.openerId);}catch(_){}
+    if(this.leafOpenHook&&WorkspaceLeaf.prototype.openFile===this.leafOpenHook)WorkspaceLeaf.prototype.openFile=this.originalLeafOpenFile;
     this.resizeInteraction?.dispose();
     try{this.mainWindow?.release(this.mainWindowId);}catch(error){console.warn('Main window cleanup:',error);}
     // Restore shared methods synchronously: Obsidian does not await Component.onunload.

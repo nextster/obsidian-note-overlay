@@ -2,12 +2,18 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 class TFile { constructor(path){this.path=path;this.extension='md';} }
+class WorkspaceLeaf {
+  async openFile(file,options){
+    if(this.openFileBehavior)return this.openFileBehavior(file,options);
+    this.events.push('open:'+file.path);this.view.file=file;return 'opened';
+  }
+}
 class Plugin {}
 class FuzzySuggestModal {}
 class Scope {}
 const exported={exports:{}};
 vm.runInNewContext(fs.readFileSync(require.resolve('./main.js'),'utf8'),{
-  module:exported,require:name=>name==='obsidian'?{Plugin,TFile,FuzzySuggestModal,Scope,Notice:class{},setIcon(){}}:require(name),
+  module:exported,require:name=>name==='obsidian'?{Plugin,TFile,WorkspaceLeaf,FuzzySuggestModal,Scope,Notice:class{},setIcon(){}}:require(name),
   console,setTimeout,clearTimeout,Promise,Set,Array,Math,Date
 },{filename:'main.js'});
 const Panel=exported.exports;
@@ -17,11 +23,10 @@ function fixture(files=['qa-one.md','qa-two.md']) {
   const group={type:'tabs',children:[],currentTab:0};
   const container={type:'window',children:[group],win:{},detach(){events.push('detach-window');}};
   const makeLeaf=file=>{
-    const leaf={id:'leaf-'+Math.random(),type:'leaf',parent:group,view:{file:file?new TFile(file):null,save:async()=>events.push('save:'+file),editor:{focus(){}}},
-      async openFile(file){events.push('open:'+file.path);this.view.file=file;},
+    const leaf=Object.assign(new WorkspaceLeaf(),{events,id:'leaf-'+Math.random(),type:'leaf',parent:group,view:{file:file?new TFile(file):null,save:async()=>events.push('save:'+file),editor:{focus(){}}},
       async setViewState(){events.push('empty');this.view.file=null;},
       detach(){events.push('detach:'+this.id);group.children.splice(group.children.indexOf(this),1);},
-      getContainer:()=>container};
+      getContainer:()=>container});
     group.children.push(leaf);return leaf;
   };
   files.forEach(makeLeaf);
@@ -31,11 +36,12 @@ function fixture(files=['qa-one.md','qa-two.md']) {
   p.app={workspace,keymap:{getWindowStack:()=>({scope:null})}};
   p.settings={};p.panelLeafIds=new Set();p.livePanelLeafIds=new Set();
   p.panelContainer=container;p.panelWindow=container.win;p.leaf=group.children[0];
-  p.panel={isDestroyed:()=>false,hide(){events.push('hide');},removeListener(){}};
-  p.saveData=async()=>events.push('session');p.ensurePanel=async()=>{};p.showPanel=()=>events.push('show');
+  p.panel={visible:true,isDestroyed:()=>false,isVisible(){return this.visible;},hide(){this.visible=false;events.push('hide');},removeListener(){}};
+  p.saveData=async()=>events.push('session');p.ensurePanel=async()=>{};p.showPanel=()=>{p.panel.visible=true;events.push('show');};
   p.syncPanelLeaves();
   return {p,events,group,workspace,makeLeaf};
 }
+async function externalOpen(p,leaf,file,options){const result=await leaf.openFile(file,options);await p.actionQueue;return result;}
 (async()=>{
   {
     const {p,events,group,workspace}=fixture();
@@ -168,5 +174,160 @@ function fixture(files=['qa-one.md','qa-two.md']) {
     const response=await request({host:'127.0.0.1:51235'},'/toggle');
     assert.equal(response.code,500);assert.equal(response.body.includes('PRIVATE-NOTE'),false);assert.equal(response.body.includes('stack'),false);
   }
-  console.log('PASS: panel tabs, editor-save ordering, local session selection, layout ownership, unload cleanup and localhost request boundaries.');
+  {
+    const {p,events,group,workspace,makeLeaf}=fixture(['qa-hidden.md']);
+    p.installPanelOpenHook();p.panel.visible=false;
+    const file=new TFile('qa-external.md');
+    assert.equal(await externalOpen(p,group.children[0],file),'opened','openFile preserves the original result');
+    assert.equal(p.panel.visible,true,'an external open in the active hidden panel reveals it');
+    await p.hidePanel();
+    await externalOpen(p,group.children[0],file);
+    assert.equal(events.filter(event=>event==='show').length,2,'opening the same file also reveals a hidden panel without workspace events');
+    await externalOpen(p,group.children[0],new TFile('qa-visible.md'));
+    assert.equal(events.filter(event=>event==='show').length,2,'an already visible panel does not need another show');
+    const future=makeLeaf('qa-future.md');workspace.activeLeaf=future;p.panel.visible=false;
+    await externalOpen(p,future,new TFile('qa-future-open.md'));
+    assert.equal(events.filter(event=>event==='show').length,3,'tabs created after hook installation are covered');
+    let completed=false;
+    const nested=p.openNote(new TFile('qa-plugin-open.md')).then(()=>{completed=true;});
+    await waitFor(()=>completed);await nested;await p.actionQueue;
+    assert.equal(future.view.file.path,'qa-plugin-open.md','a plugin action awaiting openFile must not deadlock its own action queue');
+    await p.onunload();
+  }
+  {
+    const {p,events,group,workspace}=fixture();
+    p.installPanelOpenHook();p.panel.visible=false;
+    const shared=group.children[0].view.file;
+    const main=Object.assign(new WorkspaceLeaf(),{events,view:{file:shared}});
+    workspace.activeLeaf=main;
+    await externalOpen(p,main,shared);
+    assert.equal(events.includes('show'),false,'opening the same note in the main window must not wake the panel');
+    assert.equal(p.actionQueue,undefined,'ordinary windows must not enqueue panel actions');
+    workspace.activeLeaf=group.children[0];
+    await externalOpen(p,group.children[1],shared);
+    assert.equal(events.includes('show'),false,'background panel opens must not wake the panel');
+    await externalOpen(p,group.children[0],shared,{active:false});
+    assert.equal(events.includes('show'),false,'explicit background opens stay hidden even when the leaf was already active');
+    const attachment=new TFile('qa-attachment.txt');attachment.extension='txt';
+    await externalOpen(p,group.children[0],attachment);
+    assert.equal(events.includes('show'),false,'non-Markdown views do not reveal the panel');
+    await p.onunload();
+  }
+  {
+    const {p,events,group,workspace,makeLeaf}=fixture();
+    p.installPanelOpenHook();p.panel.visible=false;
+    const background=group.children[1];
+    let finish;
+    background.openFileBehavior=file=>new Promise(resolve=>{finish=()=>{background.view.file=file;resolve();};});
+    const opening=background.openFile(new TFile('qa-background-start.md'));
+    workspace.activeLeaf=background;
+    finish();await opening;await p.actionQueue;
+    assert.equal(events.includes('show'),false,'a default background open must not reveal a panel merely because its leaf became active before completion');
+    assert.equal(p.actionQueue,undefined,'implicit background opens do not enqueue a reveal');
+    const foreground=makeLeaf('qa-new-foreground.md');
+    foreground.openFileBehavior=async(file,options)=>{
+      assert.equal(options.active,true);foreground.view.file=file;workspace.activeLeaf=foreground;return 'opened';
+    };
+    await externalOpen(p,foreground,new TFile('qa-explicit-foreground.md'),{active:true});
+    assert.equal(events.filter(event=>event==='show').length,1,'an explicitly active open can reveal a new panel leaf after activation');
+    await p.onunload();
+  }
+  for(const guard of ['restoring','sessionReady','unloading']){
+    const {p,events,group}=fixture(['qa-guarded.md']);
+    p.installPanelOpenHook();p.panel.visible=false;
+    p[guard]=guard==='sessionReady'?false:true;
+    let finish;
+    group.children[0].openFileBehavior=file=>new Promise(resolve=>{finish=()=>{group.children[0].view.file=file;resolve();};});
+    const opening=group.children[0].openFile(new TFile('qa-during-restore.md'));
+    p[guard]=guard==='sessionReady'?true:false;
+    finish();await opening;await p.actionQueue;
+    assert.equal(events.includes('show'),false,guard+' at invocation suppresses reveal even if the guard clears before completion');
+    await p.onunload();
+  }
+  for(const guard of ['restoring','sessionReady','unloading','destroyed']){
+    const {p,events,group}=fixture(['qa-before-guard.md']);
+    p.installPanelOpenHook();p.panel.visible=false;
+    let finish;
+    group.children[0].openFileBehavior=file=>new Promise(resolve=>{finish=()=>{group.children[0].view.file=file;resolve();};});
+    const opening=group.children[0].openFile(new TFile('qa-after-guard.md'));
+    if(guard==='destroyed')p.panel.isDestroyed=()=>true;
+    else p[guard]=guard==='sessionReady'?false:true;
+    finish();await opening;await p.actionQueue;
+    assert.equal(events.includes('show'),false,guard+' at completion suppresses reveal');
+    if(guard==='destroyed')p.panel.isDestroyed=()=>false;
+    await p.onunload();
+  }
+  for(const changed of ['active-leaf','file','membership','hide-generation']){
+    const {p,events,group,workspace}=fixture(['qa-queued.md']);
+    p.installPanelOpenHook();p.panel.visible=false;
+    let release;
+    p.runAction(()=>new Promise(resolve=>{release=resolve;}));
+    await waitFor(()=>typeof release==='function');
+    const leaf=group.children[0];await leaf.openFile(new TFile('qa-queued-open.md'));
+    if(changed==='active-leaf')workspace.activeLeaf={type:'leaf'};
+    if(changed==='file')leaf.view.file=new TFile('qa-newer-file.md');
+    if(changed==='membership')group.children.splice(0,1);
+    if(changed==='hide-generation')await p._hidePanel();
+    release();await p.actionQueue;
+    assert.equal(events.includes('show'),false,'queued reveal rechecks '+changed);
+    await p.onunload();
+  }
+  {
+    const {p,events,group}=fixture(['qa-rejected.md']);
+    p.installPanelOpenHook();p.panel.visible=false;
+    const error=new Error('open failed');
+    group.children[0].openFileBehavior=async()=>{throw error;};
+    await assert.rejects(group.children[0].openFile(new TFile('qa-failed-open.md')),caught=>caught===error);
+    assert.equal(p.actionQueue,undefined,'a rejected open does not enqueue a reveal');
+    assert.equal(events.includes('show'),false);
+    await p.onunload();
+  }
+  {
+    const {p,events,group}=fixture(['qa-old-open.md']);
+    p.installPanelOpenHook();
+    let finish;
+    group.children[0].openFileBehavior=file=>new Promise(resolve=>{finish=()=>{group.children[0].view.file=file;resolve();};});
+    const opening=group.children[0].openFile(new TFile('qa-delayed-open.md'));
+    await p.hidePanel();
+    finish();await opening;await p.actionQueue;
+    assert.equal(p.panel.visible,false,'completion of an older open cannot undo a newer hide');
+    assert.equal(events.includes('show'),false);
+    await p.onunload();
+  }
+  {
+    const {p,events,group}=fixture(['qa-hide-start.md']);
+    p.installPanelOpenHook();
+    let finishSave,first=true;
+    group.children[0].view.save=()=>first?(first=false,new Promise(resolve=>{finishSave=resolve;})):Promise.resolve();
+    const hiding=p.hidePanel();
+    await waitFor(()=>typeof finishSave==='function');
+    assert.equal(p.hideGeneration,1,'hide generation advances before editor saves complete');
+    await group.children[0].openFile(new TFile('qa-open-after-hide-start.md'));
+    finishSave();await hiding;await p.actionQueue;
+    assert.equal(p.panel.visible,true,'an open started after hide began is revealed after the queued hide completes');
+    assert.ok(events.indexOf('show')>events.indexOf('hide'));
+    await p.onunload();
+  }
+  {
+    const {p,group}=fixture(['qa-hook-cleanup.md']);
+    const original=WorkspaceLeaf.prototype.openFile;
+    p.installPanelOpenHook();
+    let finishSave;
+    group.children[0].view.save=()=>new Promise(resolve=>{finishSave=resolve;});
+    const cleanup=p.onunload();
+    assert.equal(WorkspaceLeaf.prototype.openFile,original,'unload restores the shared prototype synchronously');
+    await waitFor(()=>typeof finishSave==='function');finishSave();await cleanup;
+  }
+  {
+    const {p}=fixture(['qa-newer-hook.md']);
+    const original=WorkspaceLeaf.prototype.openFile;
+    p.installPanelOpenHook();
+    const installed=WorkspaceLeaf.prototype.openFile;
+    const newer=function(...args){return installed.apply(this,args);};
+    WorkspaceLeaf.prototype.openFile=newer;
+    const cleanup=p.onunload();
+    assert.equal(WorkspaceLeaf.prototype.openFile,newer,'unload preserves a newer wrapper installed by another plugin');
+    await cleanup;WorkspaceLeaf.prototype.openFile=original;
+  }
+  console.log('PASS: panel tabs, editor saves, session ownership, external opens including repeats, hide races, hook cleanup and localhost boundaries.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
