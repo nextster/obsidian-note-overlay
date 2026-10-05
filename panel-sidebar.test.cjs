@@ -237,9 +237,8 @@ test('clicking labels opens notes; hiding restores editor focus and disposal kee
   h.label('one.md').emit('click');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.opened[0], h.files[0]);
-  const close = h.sidebar.element.querySelector('.note-panel-sidebar-close');
-  close.focus();
-  close.emit('click');
+  h.row('one.md').focus();
+  h.sidebar.setVisible(false);
   assert.equal(h.sidebar.element.hidden, true);
   assert.equal(h.document.activeElement, h.editor);
   assert.deepEqual(h.changes.at(-1), { visible: false, expandedFolders: [] });
@@ -250,7 +249,6 @@ test('clicking labels opens notes; hiding restores editor focus and disposal kee
   assert.equal(h.container.firstChild, h.root);
   assert.equal(h.document.head.children.length, 0);
   assert.equal([...h.tree.listeners.values()].every(listeners => listeners.size === 0), true);
-  assert.equal([...close.listeners.values()].every(listeners => listeners.size === 0), true);
   h.sidebar.refresh();
   h.sidebar.syncActive();
   h.sidebar.setVisible(false);
@@ -258,14 +256,13 @@ test('clicking labels opens notes; hiding restores editor focus and disposal kee
   assert.deepEqual(h.sidebar.getState(), { visible: true, expandedFolders: [] });
 });
 
-test('header close uses the supplied active-editor callback; null state is accepted', () => {
+test('hiding uses the supplied active-editor callback; null state is accepted', () => {
   let focused = 0;
   const h = harness({ state: null, focusEditor: () => { focused++; } });
   assert.equal(h.sidebar.element.hidden, true);
   h.sidebar.setVisible(true);
-  const close = h.sidebar.element.querySelector('.note-panel-sidebar-close');
-  close.focus();
-  close.emit('click');
+  h.row('alpha').focus();
+  h.sidebar.setVisible(false);
   assert.equal(focused, 1);
   assert.equal(h.sidebar.element.hidden, true);
 });

@@ -19,14 +19,7 @@ function createNoteSidebar({ document, container, getFiles, getActivePath, onOpe
   header.className = 'note-panel-sidebar-header';
   const title = document.createElement('span');
   title.textContent = 'Заметки';
-  const close = document.createElement('button');
-  close.className = 'note-panel-sidebar-close clickable-icon';
-  close.type = 'button';
-  close.title = 'Скрыть боковую панель (⌘⇧B)';
-  close.setAttribute('aria-label', close.title);
-  if (setIcon) setIcon(close, 'panel-left-close');
-  else close.textContent = '‹';
-  header.append(title, close);
+  header.append(title);
   const tree = document.createElement('div');
   tree.className = 'note-panel-sidebar-tree';
   tree.setAttribute('role', 'tree');
@@ -38,9 +31,6 @@ function createNoteSidebar({ document, container, getFiles, getActivePath, onOpe
     .note-panel-sidebar[hidden] { display:none; }
     .note-panel-sidebar + * { min-width:0; }
     .note-panel-sidebar-header { display:flex;align-items:center;justify-content:space-between;gap:8px;box-sizing:border-box;height:72px;min-height:72px;padding:38px 10px 0 14px;color:var(--text-muted);font-weight:var(--font-medium); }
-    .note-panel-sidebar-close { width:24px;height:24px;padding:4px;border:0;box-shadow:none;background:transparent;color:var(--text-muted); }
-    .note-panel-sidebar-close:hover { background:var(--background-modifier-hover);color:var(--text-normal); }
-    .note-panel-sidebar-close svg { width:16px;height:16px; }
     .note-panel-sidebar-tree { flex:1;min-height:0;overflow:auto;padding:4px 6px 10px; }
     .note-panel-sidebar-row { display:flex;align-items:center;gap:5px;min-height:28px;padding:4px 7px;border-radius:var(--radius-s);cursor:pointer;user-select:none;color:var(--text-muted);line-height:1.35;outline:none; }
     .note-panel-sidebar-row:hover { background:var(--background-modifier-hover);color:var(--text-normal); }
@@ -267,11 +257,9 @@ function createNoteSidebar({ document, container, getFiles, getActivePath, onOpe
     render();
     if (changed) notify();
   };
-  const onClose = () => setVisible(false);
   tree.addEventListener('click', onClick);
   tree.addEventListener('keydown', onKey);
   tree.addEventListener('focusin', onFocus);
-  close.addEventListener('click', onClose);
   element.hidden = !visible;
   refresh();
   return {
@@ -282,7 +270,6 @@ function createNoteSidebar({ document, container, getFiles, getActivePath, onOpe
       tree.removeEventListener('click', onClick);
       tree.removeEventListener('keydown', onKey);
       tree.removeEventListener('focusin', onFocus);
-      close.removeEventListener('click', onClose);
       element.remove();
       style.remove();
     },
