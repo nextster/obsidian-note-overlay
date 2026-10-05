@@ -166,6 +166,9 @@ module.exports = class PanelMicroDemo extends Plugin {
       this.app.workspace.setActiveLeaf(this.leaf,{focus:false});
       this.installToolbar();
       this.installPanelKeys();
+      const {installResize}=require(path.join(folder,'panel-resize.cjs'));
+      this.resizeInteraction?.dispose();
+      this.resizeInteraction=installResize(this.panelWindow,w,error=>this.report(error));
     }finally{this.restoring=false;}
     this.sessionReady=true;
     await this.persistSession();
@@ -278,9 +281,10 @@ module.exports = class PanelMicroDemo extends Plugin {
   showPanel(){if(this.unloading)return;this.panel.showInactive();this.native.inspect(this.panel.getNativeWindowHandle(),true);}
   async saveEditor(){for(const leaf of this.getPanelLeaves())if(leaf.view?.save)await leaf.view.save();}
   hidePanel(){return this.runAction(()=>this._hidePanel());}
-  async _hidePanel(){this.picker?.close();await this.saveEditor();await this.persistSession();if(this.panel&&!this.panel.isDestroyed())this.panel.hide();}
+  async _hidePanel(){this.resizeInteraction?.cancel();this.picker?.close();await this.saveEditor();await this.persistSession();if(this.panel&&!this.panel.isDestroyed())this.panel.hide();}
   onunload(){
     this.unloading=true;clearTimeout(this.boundsTimer);clearTimeout(this.sessionTimer);this.server?.close();try{this.popup?.disarm(this.openerId);}catch(_){}
+    this.resizeInteraction?.dispose();
     try{this.mainWindow?.release(this.mainWindowId);}catch(error){console.warn('Main window cleanup:',error);}
     // Restore shared methods synchronously: Obsidian does not await Component.onunload.
     const workspace=this.app.workspace;

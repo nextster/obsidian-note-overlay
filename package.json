@@ -1,6 +1,6 @@
 {
   "name": "obsidian-note-panel",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "A native macOS floating note panel for Obsidian.",
   "license": "MIT",
