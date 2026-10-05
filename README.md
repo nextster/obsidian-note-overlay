@@ -47,7 +47,7 @@ Uninstall preserves notes, `data.json`, and unrelated files. Restart Obsidian af
 
 ## Install a release manually
 
-Download the installation ZIP from [Releases](https://github.com/nextster/obsidian-note-panel/releases), extract it, and place the `panel-micro-demo` directory in your vault's `.obsidian/plugins/` directory. Enable **Note Panel** in Obsidian's Community plugins settings.
+Download the installation ZIP from [Releases](https://github.com/nextster/obsidian-note-overlay/releases), extract it, and place the `panel-micro-demo` directory in your vault's `.obsidian/plugins/` directory. Enable **Note Panel** in Obsidian's Community plugins settings.
 
 The internal plugin ID stays `panel-micro-demo` to preserve settings from the earlier local prototype. When updating an existing installation, replace the runtime files and keep its `data.json`.
 

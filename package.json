@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-note-panel",
+  "name": "obsidian-note-overlay",
   "version": "0.5.2",
   "private": true,
   "description": "A native macOS floating note panel for Obsidian.",
@@ -7,7 +7,7 @@
   "author": "Tema Nesterenko (nextster)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nextster/obsidian-note-panel.git"
+    "url": "https://github.com/nextster/obsidian-note-overlay.git"
   },
   "engines": { "node": ">=22" },
   "scripts": {
