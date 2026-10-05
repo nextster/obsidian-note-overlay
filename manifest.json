@@ -1,7 +1,7 @@
 {
   "id": "panel-micro-demo",
   "name": "Note Panel",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "minAppVersion": "1.13.7",
   "description": "Edit vault notes in a native floating panel on macOS.",
   "author": "Tema Nesterenko",

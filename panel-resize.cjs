@@ -1,8 +1,9 @@
 const READY_CLASS = 'note-panel-modifier-resize-ready';
 const DRAG_CLASS = 'note-panel-modifier-resizing';
 const NESW_CLASS = 'note-panel-modifier-resize-nesw';
+const MOVE_CLASS = 'note-panel-modifier-moving';
 const DEFAULT_MINIMUM = [420, 300];
-const hasModifiers = event => event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey;
+const modeForModifiers = event => event.altKey && !event.ctrlKey && !event.metaKey ? (event.shiftKey ? 'resize' : 'move') : null;
 
 function nearestCorner(bounds, cursor) {
   const vertical = cursor.y < bounds.y + bounds.height / 2 ? 'n' : 's';
@@ -28,26 +29,30 @@ function resizeBounds(bounds, deltaX, deltaY, minimum = DEFAULT_MINIMUM, maximum
   };
 }
 
+function moveBounds(bounds, deltaX, deltaY) {
+  return { x: Math.round(bounds.x + deltaX), y: Math.round(bounds.y + deltaY), width: bounds.width, height: bounds.height };
+}
+
 function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor } = {}) {
   const doc = domWindow.document;
   const body = doc.body;
-  const classNames = [READY_CLASS, DRAG_CLASS, NESW_CLASS];
+  const classNames = [READY_CLASS, DRAG_CLASS, NESW_CLASS, MOVE_CLASS];
   const originalClasses = new Set(classNames.filter(name => body.classList.contains(name)));
   const style = doc.createElement('style');
   style.textContent = `
     body.${READY_CLASS}, body.${READY_CLASS} *,
     body.${DRAG_CLASS}, body.${DRAG_CLASS} * { cursor: nwse-resize !important; }
     body.${NESW_CLASS}, body.${NESW_CLASS} * { cursor: nesw-resize !important; }
+    body.${MOVE_CLASS}, body.${MOVE_CLASS} * { cursor: move !important; }
   `;
   doc.head.appendChild(style);
 
   let disposed = false;
-  let chordHeld = false;
   let gesture = null;
   let interval = null;
-  const setActiveClass = (active, corner) => {
+  const setModeClasses = (mode, corner) => {
     for (const name of classNames) {
-      const enabled = active && (name !== NESW_CLASS || corner === 'ne' || corner === 'sw');
+      const enabled = name === MOVE_CLASS ? mode === 'move' : mode === 'resize' && (name !== NESW_CLASS || corner === 'ne' || corner === 'sw');
       body.classList.toggle(name, enabled || originalClasses.has(name));
     }
   };
@@ -55,9 +60,9 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
     if (interval !== null) domWindow.clearInterval(interval);
     interval = null;
     gesture = null;
-    setActiveClass(false);
+    setModeClasses(null);
   };
-  const canResize = () => !nativeWindow.isDestroyed?.() && nativeWindow.isFocused() && nativeWindow.isVisible();
+  const canInteract = () => !nativeWindow.isDestroyed?.() && nativeWindow.isFocused() && nativeWindow.isVisible();
   const cursorPoint = () => {
     if (typeof getCursor !== 'function') throw new TypeError('Note panel resize requires a screen cursor provider');
     const point = getCursor();
@@ -67,10 +72,12 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
   const tick = () => {
     if (!gesture) return;
     try {
-      if (!canResize()) { cancel(); return; }
+      if (!canInteract()) { cancel(); return; }
       const active = gesture;
       const cursor = cursorPoint();
-      const next = resizeBounds(active.bounds, cursor.x - active.cursor.x, cursor.y - active.cursor.y, active.minimum, active.maximum, active.corner);
+      const dx = cursor.x - active.cursor.x;
+      const dy = cursor.y - active.cursor.y;
+      const next = active.mode === 'move' ? moveBounds(active.bounds, dx, dy) : resizeBounds(active.bounds, dx, dy, active.minimum, active.maximum, active.corner);
       if (['x', 'y', 'width', 'height'].every(name => next[name] === active.applied[name])) return;
       nativeWindow.setBounds(next, false);
       active.applied = next;
@@ -79,18 +86,19 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
       onError(error);
     }
   };
-  const start = () => {
+  const start = mode => {
     if (disposed || gesture) return;
     try {
-      if (!canResize()) return;
+      if (!canInteract()) return;
       const cursor = cursorPoint();
       const bounds = nativeWindow.getBounds();
       gesture = {
-        cursor: { ...cursor }, bounds, applied: bounds, corner: nearestCorner(bounds, cursor),
-        minimum: nativeWindow.getMinimumSize?.() || DEFAULT_MINIMUM,
-        maximum: nativeWindow.getMaximumSize?.() || [0, 0],
+        mode, cursor: { ...cursor }, bounds, applied: bounds,
+        corner: mode === 'resize' ? nearestCorner(bounds, cursor) : null,
+        minimum: mode === 'resize' ? nativeWindow.getMinimumSize?.() || DEFAULT_MINIMUM : null,
+        maximum: mode === 'resize' ? nativeWindow.getMaximumSize?.() || [0, 0] : null,
       };
-      setActiveClass(true, gesture.corner);
+      setModeClasses(mode, gesture.corner);
       interval = domWindow.setInterval(tick, 16);
     } catch (error) {
       cancel();
@@ -99,12 +107,20 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
   };
   const onKey = event => {
     const modifierKey = event.key === 'Shift' || event.key === 'Alt';
-    const held = hasModifiers(event) && !(event.type === 'keyup' && modifierKey);
-    if (held && !chordHeld && event.type === 'keydown' && modifierKey && !event.repeat) start();
-    if (!held) cancel();
-    // Keep the latch after blur/hide. A new modifier chord is needed to restart;
-    // key repeats and ordinary typing must not establish a new cursor origin.
-    chordHeld = held;
+    const released = event.type === 'keyup';
+    const modifiers = { altKey: event.altKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey };
+    if (released && event.key === 'Alt') modifiers.altKey = false;
+    if (released && event.key === 'Shift') modifiers.shiftKey = false;
+    const mode = modeForModifiers(modifiers);
+    if (!mode) { cancel(); return; }
+    const freshPress = modifierKey && event.type === 'keydown' && !event.repeat;
+    // A modifier release can switch an active resize back to moving. Once a
+    // gesture was canceled, only a fresh modifier press can start another one.
+    const switchRelease = modifierKey && released && Boolean(gesture);
+    if ((freshPress || switchRelease) && (!gesture || gesture.mode !== mode)) {
+      cancel();
+      start(mode);
+    }
   };
   const dispose = () => {
     if (disposed) return;
@@ -128,4 +144,4 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
   return { cancel, dispose };
 }
 
-module.exports = { installResize, resizeBounds, nearestCorner };
+module.exports = { installResize, resizeBounds, nearestCorner, moveBounds };
