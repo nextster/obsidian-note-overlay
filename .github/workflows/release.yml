@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ['[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.10.0
+      - name: Check release version
+        run: |
+          node -e 'const v=require("./manifest.json").version;if(process.env.GITHUB_REF_NAME!==v)throw new Error("Tag must equal manifest version "+v)'
+      - run: npm test
+      - run: npm run package
+      - name: Publish installation archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive="$HOME/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-$GITHUB_REF_NAME.zip"
+          gh release create "$GITHUB_REF_NAME" "$archive" --verify-tag --title "Note Panel $GITHUB_REF_NAME" --generate-notes
+

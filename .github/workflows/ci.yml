@@ -1,0 +1,40 @@
+name: Test and build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.10.0
+      - run: npm test
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.10.0
+      - run: npm test
+      - name: Build universal native bridge and installation archive
+        id: package
+        run: |
+          npm run package
+          version="$(node -p 'require("./manifest.json").version')"
+          printf 'archive=%s\n' "$HOME/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-$version.zip" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: note-panel-macos-universal
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+

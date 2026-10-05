@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+*.node
+*.zip
+.DS_Store
+data.json
+backups/
+*.before.json
+*.log

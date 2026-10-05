@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-note-panel",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A native macOS floating note panel for Obsidian.",
+  "license": "MIT",
+  "author": "Tema Nesterenko (nextster)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nextster/obsidian-note-panel.git"
+  },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test *.test.cjs",
+    "build:native": "node scripts/build-native.cjs",
+    "install:plugin": "node scripts/install.cjs",
+    "package": "node scripts/package.cjs"
+  }
+}
