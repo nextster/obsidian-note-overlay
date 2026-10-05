@@ -4,7 +4,7 @@ A macOS floating panel for Obsidian's real Markdown editor and Live Preview. Kee
 
 - Native tabs support multiple notes in the same panel.
 - The compact note-picker icon replaces the two large toolbar buttons.
-- Escape saves the open editors and hides the panel. In a picker or menu, Escape dismisses that overlay first.
+- Escape keeps Obsidian's normal editor, picker, and menu behavior. Use the global shortcut to hide the panel and save its open editors.
 - Closing Obsidian's main window keeps it hidden in the running app, so the panel can still open. **Quit Obsidian** exits the app and its plugin.
 - The panel remembers its notes, selected tab, and window bounds. Panel windows are excluded from Obsidian's saved workspace layout.
 
@@ -72,7 +72,7 @@ Verified on 2026-10-05 with Obsidian 1.13.7, Electron 43.3.0, and Apple Silicon 
 
 - Edited two notes in separate tabs and checked their saved Markdown files.
 - Opened the panel and its note picker with the main window closed.
-- Sent native Cmd+T, Cmd+W, and Escape input to verify tab and picker behavior.
+- Sent native Cmd+T and Cmd+W input to verify tab behavior. Escape keeps the panel open and dismisses its note picker.
 - Checked rapid toggles, native panel closure, plugin reload, and tab restoration after an app restart.
 - Confirmed a normal quit exits the process with the panel present.
 
@@ -83,6 +83,6 @@ npm test
 npm run package
 ```
 
-The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.2.0.zip`. CI runs JavaScript regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
+The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.2.1.zip`. CI runs JavaScript regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
 
-To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.2.0`. The release workflow builds and publishes the ZIP after tests pass.
+To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.2.1`. The release workflow builds and publishes the ZIP after tests pass.

@@ -210,10 +210,6 @@ module.exports = class PanelMicroDemo extends Plugin {
     this.panelScope=new Scope(this.previousPanelScope);
     this.panelScope.register(['Mod'],'t',()=>{void this.newTab(true).catch(e=>this.report(e));return false;});
     this.panelScope.register(['Mod'],'w',()=>{void this.closeTab(this.activePanelLeaf()).catch(e=>this.report(e));return false;});
-    this.panelScope.register([],'Escape',(event,context)=>{
-      if(Array.from(this.panelWindow.document.querySelectorAll('.modal-container,.suggestion-container,.menu')).some(el=>el.getClientRects().length))return this.previousPanelScope.handleKey(event,context);
-      void this.hidePanel().catch(e=>this.report(e));return false;
-    });
     keymap.setWindowBaseScope(this.panelWindow,this.panelScope);
   }
   selectTab(leaf){return this.runAction(async()=>{
