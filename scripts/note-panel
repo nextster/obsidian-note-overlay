@@ -1,0 +1,308 @@
+#!/usr/bin/ruby
+# Installs the complete release payload in a vault without changing Obsidian settings.
+require 'json'
+require 'fileutils'
+require 'securerandom'
+require 'open3'
+
+class NotePanelInstaller
+  PLUGIN_ID = 'panel-micro-demo'.freeze
+  RECEIPT = '.note-panel-receipt.json'.freeze
+  REGISTRY = 'vaults.json'.freeze
+  FIXED_RUNTIME = %w[main.js manifest.json panel_bridge.node].freeze
+  HELPERS = %w[main-window.cjs popup-main.cjs session-layout.cjs panel-resize.cjs].freeze
+  RUNTIME_FILES = (FIXED_RUNTIME + HELPERS).freeze
+
+  def initialize
+    @payload = File.join(File.dirname(File.realpath(__FILE__)), PLUGIN_ID)
+    @state = File.expand_path(ENV['NOTE_PANEL_STATE_DIR'] || File.join(Dir.home, 'Library/Application Support/Note Panel'))
+  end
+
+  def run(arguments)
+    command = arguments.shift
+    case command
+    when nil, '--help', '-h', 'help'
+      raise 'Unexpected arguments' unless arguments.empty?
+      puts "Usage: note-panel install [VAULT]\n       note-panel install --registered\n       note-panel uninstall VAULT\n       note-panel uninstall --all [--keep-registry]\n       note-panel --version"
+      puts 'Install opens a folder chooser when VAULT is omitted. Use an existing vault with a .obsidian directory.'
+      puts 'Settings and notes are preserved. Obsidian is never started or quit automatically.'
+    when '--version'
+      raise 'Unexpected arguments' unless arguments.empty?
+      puts payload_manifest.fetch('version')
+    when 'install'
+      raise 'Usage: note-panel install [VAULT | --registered]' if arguments.length > 1
+      if arguments == ['--registered']
+        install_registered
+      else
+        path = arguments.first
+        raise "Unknown option: #{path}" if path && path.start_with?('--')
+        path ||= choose_vault
+        install_one(path)
+      end
+    when 'uninstall'
+      if arguments.include?('--all')
+        keep = arguments.delete('--keep-registry')
+        raise 'Usage: note-panel uninstall --all [--keep-registry]' unless arguments == ['--all']
+        uninstall_all(!!keep)
+      else
+        raise 'Usage: note-panel uninstall VAULT' unless arguments.length == 1 && !arguments.first.start_with?('--')
+        uninstall_one(arguments.first)
+      end
+    else
+      raise "Unknown command: #{command}. Run note-panel --help."
+    end
+  end
+
+  private
+
+  def exists?(path)
+    File.exist?(path) || File.symlink?(path)
+  end
+
+  def regular_file!(path)
+    raise "Refusing symlink: #{path}" if File.symlink?(path)
+    raise "Expected a regular file: #{path}" unless File.file?(path)
+  end
+
+  def directory!(path)
+    raise "Refusing symlink: #{path}" if File.symlink?(path)
+    raise "Expected a directory: #{path}" unless File.directory?(path)
+  end
+
+  def allowed_runtime?(name)
+    name.is_a?(String) && RUNTIME_FILES.include?(name)
+  end
+
+  def read_json(path)
+    regular_file!(path)
+    JSON.parse(File.read(path))
+  rescue JSON::ParserError => error
+    raise "Invalid JSON in #{path}: #{error.message}"
+  end
+
+  def payload_manifest
+    return @manifest if @manifest
+    directory!(@payload)
+    manifest = read_json(File.join(@payload, 'manifest.json'))
+    raise 'Release manifest has an unexpected plugin ID' unless manifest.is_a?(Hash) && manifest['id'] == PLUGIN_ID
+    raise 'Release manifest has an invalid version' unless manifest['version'].is_a?(String) && manifest['version'].match?(/\A\d+\.\d+\.\d+\z/)
+    @manifest = manifest
+  end
+
+  def payload_files
+    return @files if @files
+    payload_manifest
+    helpers = Dir.children(@payload).select { |name| name.end_with?('.cjs') && !name.end_with?('.test.cjs') }
+    unknown = helpers.reject { |name| HELPERS.include?(name) }
+    raise "Release contains unsupported runtime helpers: #{unknown.join(', ')}" unless unknown.empty?
+    files = (FIXED_RUNTIME + helpers).uniq.sort
+    files.each { |name| regular_file!(File.join(@payload, name)) }
+    @files = files
+  end
+
+  def vault_path(path)
+    expanded = File.expand_path(path)
+    raise "Vault is missing or unavailable: #{expanded}" unless File.directory?(expanded)
+    canonical = File.realpath(expanded)
+    obsidian = File.join(canonical, '.obsidian')
+    raise "Expected an existing Obsidian vault with a .obsidian directory: #{canonical}" unless exists?(obsidian)
+    directory!(obsidian)
+    plugins = File.join(obsidian, 'plugins')
+    directory!(plugins) if exists?(plugins)
+    destination = File.join(plugins, PLUGIN_ID)
+    directory!(destination) if exists?(destination)
+    canonical
+  end
+
+  def plugin_path(vault)
+    File.join(vault, '.obsidian', 'plugins', PLUGIN_ID)
+  end
+
+  def receipt_files(destination, vault)
+    path = File.join(destination, RECEIPT)
+    return nil unless exists?(path)
+    receipt = read_json(path)
+    unless receipt.is_a?(Hash) && receipt['id'] == PLUGIN_ID && receipt['vault'] == vault && receipt['version'].is_a?(String) && receipt['version'].match?(/\A\d+\.\d+\.\d+\z/) && receipt['files'].is_a?(Array) && receipt['files'].all? { |name| allowed_runtime?(name) } && receipt['files'].uniq == receipt['files']
+      raise "Invalid installation receipt: #{path}"
+    end
+    # Validate the entire receipt before deleting or replacing any file.
+    receipt['files'].each do |name|
+      file = File.join(destination, name)
+      regular_file!(file) if exists?(file)
+    end
+    receipt['files']
+  end
+
+  def validate_state
+    current = @state
+    loop do
+      raise "Refusing symlink in state path: #{current}" if File.symlink?(current)
+      raise "Expected a state directory: #{current}" if exists?(current) && !File.directory?(current)
+      parent = File.dirname(current)
+      break if parent == current
+      current = parent
+    end
+    registry = File.join(@state, REGISTRY)
+    regular_file!(registry) if exists?(registry)
+  end
+
+  def registered_vaults
+    validate_state
+    path = File.join(@state, REGISTRY)
+    return [] unless exists?(path)
+    value = read_json(path)
+    unless value.is_a?(Hash) && value['version'] == 1 && value['vaults'].is_a?(Array) && value['vaults'].all? { |vault| vault.is_a?(String) && vault.start_with?('/') && File.expand_path(vault) == vault }
+      raise "Invalid vault registry: #{path}"
+    end
+    value['vaults'].uniq
+  end
+
+  def atomic_write(path, contents, mode)
+    regular_file!(path) if exists?(path)
+    temporary = File.join(File.dirname(path), ".note-panel-#{SecureRandom.hex(12)}.tmp")
+    begin
+      File.open(temporary, File::WRONLY | File::CREAT | File::EXCL, mode) do |file|
+        file.write(contents)
+        file.flush
+        file.fsync
+      end
+      File.chmod(mode, temporary)
+      File.rename(temporary, path)
+    ensure
+      File.delete(temporary) if File.exist?(temporary)
+    end
+  end
+
+  def save_registry(vaults)
+    validate_state
+    FileUtils.mkdir_p(@state, :mode => 0700)
+    File.chmod(0700, @state)
+    atomic_write(File.join(@state, REGISTRY), JSON.pretty_generate('version' => 1, 'vaults' => vaults.uniq.sort) + "\n", 0600)
+  end
+
+  def install_runtime(vault)
+    files = payload_files
+    destination = plugin_path(vault)
+    old_files = exists?(destination) ? receipt_files(destination, vault) : nil
+    if exists?(destination) && !Dir.empty?(destination)
+      installed_manifest = File.join(destination, 'manifest.json')
+      # A settings-only directory can remain after uninstall. Existing runtime
+      # needs a matching manifest or our valid ownership marker before replacement.
+      if exists?(installed_manifest) || (!old_files && files.any? { |name| exists?(File.join(destination, name)) })
+        manifest = read_json(installed_manifest)
+        raise "Existing installation has an unexpected plugin ID: #{installed_manifest}" unless manifest.is_a?(Hash) && manifest['id'] == PLUGIN_ID
+      end
+    end
+    files.each do |name|
+      target = File.join(destination, name)
+      regular_file!(target) if exists?(target)
+    end
+    FileUtils.mkdir_p(destination)
+    files.each do |name|
+      # Rename preserves the previous inode for a native addon already mapped in Obsidian.
+      atomic_write(File.join(destination, name), File.binread(File.join(@payload, name)), 0644)
+    end
+    (old_files || []).reject { |name| files.include?(name) }.each do |name|
+      path = File.join(destination, name)
+      File.delete(path) if exists?(path)
+    end
+    atomic_write(File.join(destination, RECEIPT), JSON.pretty_generate('id' => PLUGIN_ID, 'vault' => vault, 'version' => payload_manifest['version'], 'files' => files) + "\n", 0600)
+    puts "Installed Note Panel #{payload_manifest['version']}: #{destination}"
+  end
+
+  def uninstall_runtime(vault, keep_receipt = false)
+    destination = plugin_path(vault)
+    files = exists?(destination) ? receipt_files(destination, vault) : nil
+    unless files
+      puts "No managed Note Panel installation: #{vault}"
+      return
+    end
+    files.each do |name|
+      path = File.join(destination, name)
+      File.delete(path) if exists?(path)
+    end
+    File.delete(File.join(destination, RECEIPT)) unless keep_receipt
+    Dir.rmdir(destination) if Dir.empty?(destination)
+    puts "Removed managed Note Panel files: #{vault}"
+  end
+
+  def guidance
+    puts 'Restart Obsidian to load the updated native bridge. Enable Note Panel in Community plugins if needed.'
+    puts 'Vault notes, data.json, enabled-plugin settings, and hotkeys are preserved.'
+  end
+
+  def install_one(path)
+    vault = vault_path(path)
+    registered = registered_vaults
+    install_runtime(vault)
+    save_registry(registered + [vault])
+    guidance
+  end
+
+  def for_registered(registered)
+    registered.each do |path|
+      begin
+        vault = vault_path(path)
+        raise "Registered vault path changed: #{path}" unless vault == path
+      rescue StandardError => error
+        warn "Skipping registered vault (registration retained): #{error.message}"
+        next
+      end
+      yield vault
+    end
+  end
+
+  def install_registered
+    registered = registered_vaults
+    if registered.empty?
+      puts 'Choose your vault with note-panel install, or run note-panel install "/path/to/vault".'
+      return
+    end
+    payload_files
+    for_registered(registered) do |vault|
+      begin
+        files = receipt_files(plugin_path(vault), vault)
+        raise "Managed installation marker is missing: #{vault}" unless files
+      rescue StandardError => error
+        warn "Skipping registered vault (registration retained): #{error.message}"
+        next
+      end
+      install_runtime(vault)
+    end
+    guidance
+  end
+
+  def uninstall_one(path)
+    vault = vault_path(path)
+    registered = registered_vaults
+    uninstall_runtime(vault)
+    save_registry(registered.reject { |item| item == vault })
+    puts 'Restart Obsidian to unload the removed plugin.'
+  end
+
+  def uninstall_all(keep_registry)
+    registered = registered_vaults
+    removed = []
+    for_registered(registered) do |vault|
+      uninstall_runtime(vault, keep_registry)
+      removed << vault
+    end
+    save_registry(registered - removed) unless keep_registry || registered.empty?
+    puts 'Restart Obsidian to unload the removed plugin.' unless removed.empty?
+  end
+
+  def choose_vault
+    stdout, stderr, status = Open3.capture3('/usr/bin/osascript', '-e', 'POSIX path of (choose folder with prompt "Choose an existing Obsidian vault for Note Panel")')
+    raise 'Folder selection cancelled' unless status.success?
+    path = stdout.strip
+    raise 'No vault selected' if path.empty?
+    path
+  end
+end
+
+begin
+  NotePanelInstaller.new.run(ARGV.dup)
+rescue StandardError => error
+  warn "note-panel: #{error.message}"
+  exit 1
+end

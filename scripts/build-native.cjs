@@ -60,14 +60,14 @@ async function findHeaders() {
 
 async function buildNative() {
   if (process.platform !== 'darwin') throw new Error('The native panel requires macOS and Xcode Command Line Tools');
-  execFileSync('/usr/bin/xcrun', ['--find', 'clang++'], { stdio: 'ignore' });
+  execFileSync('/usr/bin/xcrun', ['--find', 'clang'], { stdio: 'ignore' });
   const headers = await findHeaders();
   fs.mkdirSync(path.dirname(nativePath), { recursive: true });
-  execFileSync('/usr/bin/xcrun', ['clang++',
-    '-std=c++17', '-fobjc-arc', '-bundle', '-undefined', 'dynamic_lookup',
+  execFileSync('/usr/bin/xcrun', ['clang',
+    '-std=c11', '-fobjc-arc', '-bundle', '-undefined', 'dynamic_lookup',
     '-arch', 'arm64', '-arch', 'x86_64', '-mmacosx-version-min=13.0',
     '-DNAPI_VERSION=8', '-I', headers, '-framework', 'AppKit',
-    path.join(root, 'panel_bridge.mm'), '-o', nativePath,
+    path.join(root, 'panel_bridge.m'), '-o', nativePath,
   ], { stdio: 'inherit' });
   const architectures = execFileSync('/usr/bin/xcrun', ['lipo', nativePath, '-archs'], { encoding: 'utf8' }).trim().split(/\s+/);
   if (!['arm64', 'x86_64'].every(arch => architectures.includes(arch))) throw new Error('Native bridge must contain arm64 and x86_64');

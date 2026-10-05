@@ -22,8 +22,12 @@ async function packagePlugin() {
   try {
     copyRuntime(destination);
     fs.copyFileSync(native, path.join(destination, 'panel_bridge.node'));
+    const installer = path.join(staging, 'note-panel');
+    fs.copyFileSync(path.join(__dirname, 'note-panel'), installer);
+    fs.chmodSync(installer, 0o755);
+    for (const file of ['README.md', 'LICENSE']) fs.copyFileSync(path.join(__dirname, '..', file), path.join(staging, file));
     fs.rmSync(archive, { force: true });
-    execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', '--norsrc', '--noextattr', '--noqtn', '--noacl', destination, archive], { stdio: 'inherit' });
+    execFileSync('/usr/bin/ditto', ['-c', '-k', '--norsrc', '--noextattr', '--noqtn', '--noacl', staging, archive], { stdio: 'inherit' });
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
   }

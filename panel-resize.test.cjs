@@ -63,10 +63,10 @@ function harness({ minimum = [420, 300], maximum = [0, 0], existingReady = false
     return value;
   };
   const start = () => {
-    event('keydown', { shiftKey: true, key: 'Shift' });
-    event('keydown', { ...modifiers, key: 'Alt' });
+    event('keydown', { altKey: true, key: 'Alt' });
+    event('keydown', { ...modifiers, key: 'Shift' });
   };
-  const startMove = () => event('keydown', { altKey: true, key: 'Alt' });
+  const startMove = () => event('keydown', { shiftKey: true, key: 'Shift' });
   const tick = () => { for (const fn of [...intervals.values()]) fn(); };
   return { doc, domWindow, native, classes, styles, intervals, cursor, errors, options, interaction, event, start, startMove, tick,
     cursorReads: () => cursorReads };
@@ -127,7 +127,7 @@ test('the key chord starts without a click and polls the global cursor outside t
   assert.deepEqual(h.native.changes, [[{ x: 200, y: -270, width: 420, height: 860 }, false]]);
   h.tick();
   assert.equal(h.native.changes.length, 1);
-  h.event('keyup', { shiftKey: true, key: 'Alt' });
+  h.event('keyup', { altKey: true, key: 'Shift' });
   assert.equal(h.intervals.size, 0);
   assert.equal(h.classes.size, 0);
   Object.assign(h.cursor, { x: 2000, y: 2000 });
@@ -212,10 +212,10 @@ test('a hidden or unfocused panel never starts and visibility loss cancels an ac
   h.interaction.dispose();
 });
 
-test('Alt release, DOM/native blur, hide, and cancellation stop both modes immediately', () => {
+test('Shift release, DOM/native blur, hide, and cancellation stop both modes immediately', () => {
   const h = harness();
   const resetters = [
-    () => h.event('keyup', { key: 'Alt' }),
+    () => h.event('keyup', { altKey: true, key: 'Shift' }),
     () => h.event('blur'),
     () => h.native.emit('blur'),
     () => h.native.emit('hide'),
@@ -328,7 +328,7 @@ test('moving changes only the origin and preserves the initial size', () => {
   assert.deepEqual(bounds, { x: -80, y: 30, width: 700, height: 560 });
 });
 
-test('Option alone starts moving without clicks and stops polling when released', () => {
+test('Shift alone starts moving without clicks and stops polling when released', () => {
   const h = harness();
   assert.equal(h.cursorReads(), 0);
   h.startMove();
@@ -342,9 +342,9 @@ test('Option alone starts moving without clicks and stops polling when released'
   h.tick();
   assert.deepEqual(h.native.changes, [[{ x: 920, y: -270, width: 700, height: 560 }, false]]);
   const reads = h.cursorReads();
-  h.event('keydown', { altKey: true, key: 'Alt' });
+  h.event('keydown', { shiftKey: true, key: 'Shift' });
   assert.equal(h.cursorReads(), reads);
-  h.event('keyup', { key: 'Alt' });
+  h.event('keyup', { key: 'Shift' });
   assert.equal(h.intervals.size, 0);
   assert.equal(h.classes.size, 0);
   h.tick();
@@ -352,13 +352,13 @@ test('Option alone starts moving without clicks and stops polling when released'
   h.interaction.dispose();
 });
 
-test('Option then Shift switches move to resize and back without jumping', () => {
+test('Shift then Option switches move to resize and back without jumping', () => {
   const h = harness();
   h.startMove();
   Object.assign(h.cursor, { x: 150, y: 140 });
   h.tick();
   assert.deepEqual(h.native.changes, [[{ x: -30, y: 70, width: 700, height: 560 }, false]]);
-  h.event('keydown', { ...modifiers, key: 'Shift' });
+  h.event('keydown', { ...modifiers, key: 'Alt' });
   assert.equal(h.intervals.size, 1);
   assert.equal(h.classes.has('note-panel-modifier-moving'), false);
   assert.equal(h.classes.has('note-panel-modifier-resizing'), true);
@@ -369,7 +369,7 @@ test('Option then Shift switches move to resize and back without jumping', () =>
   assert.deepEqual(h.native.changes[1], [{ x: -10, y: 90, width: 680, height: 540 }, false]);
   assert.equal(h.native.bounds.x + h.native.bounds.width, 670);
   assert.equal(h.native.bounds.y + h.native.bounds.height, 630);
-  h.event('keyup', { altKey: true, key: 'Shift' });
+  h.event('keyup', { shiftKey: true, key: 'Alt' });
   assert.equal(h.classes.has('note-panel-modifier-moving'), true);
   assert.equal(h.classes.has('note-panel-modifier-resizing'), false);
   h.tick();
@@ -377,35 +377,38 @@ test('Option then Shift switches move to resize and back without jumping', () =>
   Object.assign(h.cursor, { x: 190, y: 170 });
   h.tick();
   assert.deepEqual(h.native.changes[2], [{ x: 10, y: 100, width: 680, height: 540 }, false]);
-  h.event('keyup', { key: 'Alt' });
+  h.event('keyup', { key: 'Shift' });
   assert.equal(h.intervals.size, 0);
   h.interaction.dispose();
 });
 
-test('Shift then Option starts directly in resize without entering move mode', () => {
+test('Option alone does nothing, then Shift starts directly in resize', () => {
   const h = harness();
-  h.event('keydown', { shiftKey: true, key: 'Shift' });
+  h.event('keydown', { altKey: true, key: 'Alt' });
   assert.equal(h.intervals.size, 0);
   assert.equal(h.cursorReads(), 0);
-  h.event('keydown', { ...modifiers, key: 'Alt' });
+  Object.assign(h.cursor, { x: 200, y: 200 });
+  h.tick();
+  assert.deepEqual(h.native.changes, []);
+  h.event('keydown', { ...modifiers, key: 'Shift' });
   assert.equal(h.classes.has('note-panel-modifier-moving'), false);
   assert.equal(h.classes.has('note-panel-modifier-resizing'), true);
-  Object.assign(h.cursor, { x: 150, y: 140 });
+  Object.assign(h.cursor, { x: 250, y: 240 });
   h.tick();
   assert.deepEqual(h.native.changes, [[{ x: -30, y: 70, width: 650, height: 520 }, false]]);
   h.interaction.dispose();
 });
 
-test('canceled Option moving requires a fresh modifier press, even after a missed keyup', () => {
+test('canceled Shift moving requires a fresh modifier press, even after a missed keyup', () => {
   const h = harness();
   h.startMove();
   h.native.focused = false;
   h.native.emit('blur');
   h.native.focused = true;
   h.event('focus');
-  h.event('keydown', { altKey: true, key: 'a' });
-  h.event('keydown', { altKey: true, key: 'Alt', repeat: true });
-  h.event('keyup', { altKey: true, key: 'Shift' });
+  h.event('keydown', { shiftKey: true, key: 'a' });
+  h.event('keydown', { shiftKey: true, key: 'Shift', repeat: true });
+  h.event('keyup', { shiftKey: true, key: 'Alt' });
   assert.equal(h.intervals.size, 0);
   Object.assign(h.cursor, { x: 200, y: 200 });
   h.startMove();
@@ -424,11 +427,11 @@ test('Control and Command cancel moving and their release cannot restart it', ()
   for (const [key, modifier] of [['Control', 'ctrlKey'], ['Meta', 'metaKey']]) {
     h.startMove();
     assert.equal(h.intervals.size, 1);
-    h.event('keydown', { altKey: true, key, [modifier]: true });
+    h.event('keydown', { shiftKey: true, key, [modifier]: true });
     assert.equal(h.intervals.size, 0);
     assert.equal(h.classes.size, 0);
-    h.event('keyup', { altKey: true, key });
-    h.event('keydown', { altKey: true, key: 'a' });
+    h.event('keyup', { shiftKey: true, key });
+    h.event('keydown', { shiftKey: true, key: 'a' });
     assert.equal(h.intervals.size, 0);
   }
   h.interaction.dispose();

@@ -1,22 +1,23 @@
 #import <AppKit/AppKit.h>
 #include <node_api.h>
-#include <cstring>
+#include <stdbool.h>
+#include <string.h>
 
 static napi_value Run(napi_env env, napi_callback_info info) {
   size_t argc = 2; napi_value argv[2];
-  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
-  void* bytes = nullptr; size_t length = 0; bool buffer = false;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  void* bytes = NULL; size_t length = 0; bool buffer = false;
   if (argc < 1 || napi_is_buffer(env, argv[0], &buffer) != napi_ok || !buffer ||
       napi_get_buffer_info(env, argv[0], &bytes, &length) != napi_ok || length != sizeof(void*)) {
-    napi_throw_type_error(env, nullptr, "Expected an Electron native window handle"); return nullptr;
+    napi_throw_type_error(env, NULL, "Expected an Electron native window handle"); return NULL;
   }
   if (![NSThread isMainThread]) {
-    napi_throw_error(env, nullptr, "Must run in the Electron main process"); return nullptr;
+    napi_throw_error(env, NULL, "Must run in the Electron main process"); return NULL;
   }
-  void* pointer = nullptr; memcpy(&pointer, bytes, sizeof(pointer));
+  void* pointer = NULL; memcpy(&pointer, bytes, sizeof(pointer));
   NSView* view = (__bridge NSView*)pointer;
   NSWindow* window = view.window;
-  if (!window) { napi_throw_error(env, nullptr, "No window for native view"); return nullptr; }
+  if (!window) { napi_throw_error(env, NULL, "No window for native view"); return NULL; }
   bool fix = false;
   if (argc > 1) napi_get_value_bool(env, argv[1], &fix);
   if (fix) {
@@ -47,7 +48,7 @@ static napi_value Run(napi_env env, napi_callback_info info) {
 }
 
 static napi_value Init(napi_env env, napi_value exports) {
-  napi_value fn; napi_create_function(env, "inspect", NAPI_AUTO_LENGTH, Run, nullptr, &fn);
+  napi_value fn; napi_create_function(env, "inspect", NAPI_AUTO_LENGTH, Run, NULL, &fn);
   napi_set_named_property(env, exports, "inspect", fn); return exports;
 }
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)

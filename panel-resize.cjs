@@ -3,7 +3,7 @@ const DRAG_CLASS = 'note-panel-modifier-resizing';
 const NESW_CLASS = 'note-panel-modifier-resize-nesw';
 const MOVE_CLASS = 'note-panel-modifier-moving';
 const DEFAULT_MINIMUM = [420, 300];
-const modeForModifiers = event => event.altKey && !event.ctrlKey && !event.metaKey ? (event.shiftKey ? 'resize' : 'move') : null;
+const modeForModifiers = event => event.shiftKey && !event.ctrlKey && !event.metaKey ? (event.altKey ? 'resize' : 'move') : null;
 
 function nearestCorner(bounds, cursor) {
   const vertical = cursor.y < bounds.y + bounds.height / 2 ? 'n' : 's';
