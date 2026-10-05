@@ -220,7 +220,7 @@ module.exports = class PanelMicroDemo extends Plugin {
       .note-panel-window .workspace-tab-header-tab-list{display:none}
       .note-panel-window .panel-note-picker,.note-panel-window .panel-sidebar-toggle{position:absolute;top:7px;z-index:10;width:22px;height:22px;padding:3px;border:0;border-radius:4px;background:transparent;box-shadow:none;color:var(--text-muted);-webkit-app-region:no-drag}
       .note-panel-window .panel-note-picker{right:5px}
-      .note-panel-window .panel-sidebar-toggle{left:84px}
+      .note-panel-window .panel-sidebar-toggle{left:84px;top:8px}
       .note-panel-window .panel-note-picker:hover,.note-panel-window .panel-sidebar-toggle:hover{background:var(--background-modifier-hover);color:var(--text-normal)}
       .note-panel-window .panel-note-picker svg,.note-panel-window .panel-sidebar-toggle svg{width:14px;height:14px}
     `;doc.head.append(this.style);

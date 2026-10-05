@@ -130,6 +130,6 @@ npm test
 npm run package
 ```
 
-The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.5.4.zip`. It contains the runtime `panel-micro-demo` directory and the `note-panel` vault installer. CI runs regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
+The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.5.5.zip`. It contains the runtime `panel-micro-demo` directory and the `note-panel` vault installer. CI runs regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
 
-To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.5.4`. The release workflow builds and publishes the ZIP after tests pass. Update `nextster/homebrew-tap` with the published archive's SHA256 checksum.
+To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.5.5`. The release workflow builds and publishes the ZIP after tests pass. Update `nextster/homebrew-tap` with the published archive's SHA256 checksum.
