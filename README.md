@@ -4,7 +4,7 @@ A macOS floating panel for Obsidian's real Markdown editor and Live Preview. Kee
 
 - Native tabs support multiple notes in the same panel.
 - The compact note-picker icon replaces the two large toolbar buttons.
-- While the panel is focused, hold **Shift+Option** and move the mouse to resize it, without clicking. The pointer can be anywhere on screen. Move right/down to enlarge or left/up to shrink; the width changes symmetrically around the panel's center and the top edge stays in place. Release either key or switch focus to stop.
+- While the panel is focused, hold **Shift+Option** and move the mouse to resize it, without clicking. The pointer can be anywhere on screen. The corner nearest to the pointer when the shortcut is pressed follows the mouse; the opposite corner stays fixed. Release either key or switch focus to stop.
 - Escape keeps Obsidian's normal editor, picker, and menu behavior. Use the global shortcut to hide the panel and save its open editors.
 - Closing Obsidian's main window keeps it hidden in the running app, so the panel can still open. **Quit Obsidian** exits the app and its plugin.
 - The panel remembers its notes, selected tab, and window bounds. Panel windows are excluded from Obsidian's saved workspace layout.
@@ -76,7 +76,7 @@ Verified on 2026-10-05 with Obsidian 1.13.7, Electron 43.3.0, and Apple Silicon 
 - Sent native Cmd+T and Cmd+W input to verify tab behavior. Escape keeps the panel open and dismisses its note picker.
 - Checked rapid toggles, native panel closure, plugin reload, and tab restoration after an app restart.
 - Confirmed a normal quit exits the process with the panel present.
-- Resized without clicks using native Shift+Option key input and real system cursor movement outside the panel. Checked symmetric horizontal resizing, the fixed top edge, native minimum dimensions, and cancellation on key release, focus loss, and hiding. Returning focus does not resume a stale gesture.
+- Resized without clicks using native Shift+Option key input and real system cursor movement outside the panel. Checked all four nearest corners, their fixed opposite corners, native minimum dimensions, and selection staying fixed after crossing the window center. Reversing after reaching minimum size keeps the original anchor. Key release, focus loss, and hiding cancel resizing; returning focus does not resume a stale gesture.
 
 ## Build an installation archive
 
@@ -85,6 +85,6 @@ npm test
 npm run package
 ```
 
-The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.4.0.zip`. CI runs JavaScript regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
+The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.4.1.zip`. CI runs JavaScript regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
 
-To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.4.0`. The release workflow builds and publishes the ZIP after tests pass.
+To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.4.1`. The release workflow builds and publishes the ZIP after tests pass.

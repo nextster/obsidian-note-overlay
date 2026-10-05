@@ -1,32 +1,43 @@
 const READY_CLASS = 'note-panel-modifier-resize-ready';
 const DRAG_CLASS = 'note-panel-modifier-resizing';
+const NESW_CLASS = 'note-panel-modifier-resize-nesw';
 const DEFAULT_MINIMUM = [420, 300];
 const hasModifiers = event => event.shiftKey && event.altKey && !event.ctrlKey && !event.metaKey;
 
-function resizeBounds(bounds, deltaX, deltaY, minimum = DEFAULT_MINIMUM, maximum = [0, 0]) {
+function nearestCorner(bounds, cursor) {
+  const vertical = cursor.y < bounds.y + bounds.height / 2 ? 'n' : 's';
+  const horizontal = cursor.x < bounds.x + bounds.width / 2 ? 'w' : 'e';
+  return vertical + horizontal;
+}
+
+function resizeBounds(bounds, deltaX, deltaY, minimum = DEFAULT_MINIMUM, maximum = [0, 0], corner = 'se') {
   const dimension = (value, delta, index) => {
     const min = Number.isFinite(minimum?.[index]) && minimum[index] > 0 ? minimum[index] : 1;
     const max = Number.isFinite(maximum?.[index]) && maximum[index] > 0 ? Math.max(min, maximum[index]) : Infinity;
     return Math.round(Math.min(max, Math.max(min, value + delta)));
   };
-  const width = dimension(bounds.width, 2 * deltaX, 0);
+  const west = corner.endsWith('w');
+  const north = corner.startsWith('n');
+  const width = dimension(bounds.width, west ? -deltaX : deltaX, 0);
+  const height = dimension(bounds.height, north ? -deltaY : deltaY, 1);
   return {
-    x: Math.round(bounds.x + (bounds.width - width) / 2),
-    y: bounds.y,
+    x: west ? bounds.x + bounds.width - width : bounds.x,
+    y: north ? bounds.y + bounds.height - height : bounds.y,
     width,
-    height: dimension(bounds.height, deltaY, 1),
+    height,
   };
 }
 
 function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor } = {}) {
   const doc = domWindow.document;
   const body = doc.body;
-  const classNames = [READY_CLASS, DRAG_CLASS];
+  const classNames = [READY_CLASS, DRAG_CLASS, NESW_CLASS];
   const originalClasses = new Set(classNames.filter(name => body.classList.contains(name)));
   const style = doc.createElement('style');
   style.textContent = `
     body.${READY_CLASS}, body.${READY_CLASS} *,
     body.${DRAG_CLASS}, body.${DRAG_CLASS} * { cursor: nwse-resize !important; }
+    body.${NESW_CLASS}, body.${NESW_CLASS} * { cursor: nesw-resize !important; }
   `;
   doc.head.appendChild(style);
 
@@ -34,8 +45,11 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
   let chordHeld = false;
   let gesture = null;
   let interval = null;
-  const setActiveClass = active => {
-    for (const name of classNames) body.classList.toggle(name, active || originalClasses.has(name));
+  const setActiveClass = (active, corner) => {
+    for (const name of classNames) {
+      const enabled = active && (name !== NESW_CLASS || corner === 'ne' || corner === 'sw');
+      body.classList.toggle(name, enabled || originalClasses.has(name));
+    }
   };
   const cancel = () => {
     if (interval !== null) domWindow.clearInterval(interval);
@@ -56,7 +70,7 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
       if (!canResize()) { cancel(); return; }
       const active = gesture;
       const cursor = cursorPoint();
-      const next = resizeBounds(active.bounds, cursor.x - active.cursor.x, cursor.y - active.cursor.y, active.minimum, active.maximum);
+      const next = resizeBounds(active.bounds, cursor.x - active.cursor.x, cursor.y - active.cursor.y, active.minimum, active.maximum, active.corner);
       if (['x', 'y', 'width', 'height'].every(name => next[name] === active.applied[name])) return;
       nativeWindow.setBounds(next, false);
       active.applied = next;
@@ -72,11 +86,11 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
       const cursor = cursorPoint();
       const bounds = nativeWindow.getBounds();
       gesture = {
-        cursor: { ...cursor }, bounds, applied: bounds,
+        cursor: { ...cursor }, bounds, applied: bounds, corner: nearestCorner(bounds, cursor),
         minimum: nativeWindow.getMinimumSize?.() || DEFAULT_MINIMUM,
         maximum: nativeWindow.getMaximumSize?.() || [0, 0],
       };
-      setActiveClass(true);
+      setActiveClass(true, gesture.corner);
       interval = domWindow.setInterval(tick, 16);
     } catch (error) {
       cancel();
@@ -114,4 +128,4 @@ function installResize(domWindow, nativeWindow, onError = () => {}, { getCursor 
   return { cancel, dispose };
 }
 
-module.exports = { installResize, resizeBounds };
+module.exports = { installResize, resizeBounds, nearestCorner };

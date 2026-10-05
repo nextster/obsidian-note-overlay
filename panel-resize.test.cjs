@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { installResize, resizeBounds } = require('./panel-resize.cjs');
+const { installResize, resizeBounds, nearestCorner } = require('./panel-resize.cjs');
 
 class Target extends EventTarget {
   constructor() { super(); this.listeners = new Map(); }
@@ -71,19 +71,44 @@ function harness({ minimum = [420, 300], maximum = [0, 0], existingReady = false
     cursorReads: () => cursorReads };
 }
 
-test('horizontal resizing is symmetric around the initial center while its top remains fixed', () => {
+test('each corner follows the pointer one-to-one while the opposite corner stays fixed', () => {
   const bounds = { x: -80, y: 30, width: 700, height: 560 };
-  assert.deepEqual(resizeBounds(bounds, 50, 40), { x: -130, y: 30, width: 800, height: 600 });
-  assert.deepEqual(resizeBounds(bounds, -50, -40), { x: -30, y: 30, width: 600, height: 520 });
+  const cases = [
+    ['nw', { x: -30, y: 70, width: 650, height: 520 }],
+    ['ne', { x: -80, y: 70, width: 750, height: 520 }],
+    ['sw', { x: -30, y: 30, width: 650, height: 600 }],
+    ['se', { x: -80, y: 30, width: 750, height: 600 }],
+  ];
+  for (const [corner, expected] of cases) assert.deepEqual(resizeBounds(bounds, 50, 40, [420, 300], [0, 0], corner), expected);
   assert.deepEqual(bounds, { x: -80, y: 30, width: 700, height: 560 });
 });
 
-test('native limits clamp both dimensions without moving the center or top', () => {
+test('native limits keep the opposite corner anchored even when dragged past it', () => {
   const bounds = { x: -80, y: 30, width: 700, height: 560 };
-  assert.deepEqual(resizeBounds(bounds, 400, -800, [420, 300], [900, 1000]), { x: -180, y: 30, width: 900, height: 300 });
-  assert.deepEqual(resizeBounds(bounds, -800, 2000, [0, 0], [0, 0]), { x: 270, y: 30, width: 1, height: 2560 });
-  assert.deepEqual(resizeBounds(bounds, -800, -800), { x: 60, y: 30, width: 420, height: 300 });
-  assert.deepEqual(resizeBounds({ x: 5, y: 15, width: 701, height: 561 }, 0.3, 0.4), { x: 5, y: 15, width: 702, height: 561 });
+  const cases = [
+    ['nw', -1000, -1000, { x: -280, y: -410, width: 900, height: 1000 }],
+    ['ne', -1000, 1000, { x: -80, y: 290, width: 420, height: 300 }],
+    ['sw', 1000, -1000, { x: 200, y: 30, width: 420, height: 300 }],
+    ['se', 1000, 1000, { x: -80, y: 30, width: 900, height: 1000 }],
+  ];
+  for (const [corner, dx, dy, expected] of cases) assert.deepEqual(resizeBounds(bounds, dx, dy, [420, 300], [900, 1000], corner), expected);
+  assert.deepEqual(resizeBounds(bounds, -800, 2000, [0, 0], [0, 0]), { x: -80, y: 30, width: 1, height: 2560 });
+  assert.deepEqual(resizeBounds(bounds, -800, -800), { x: -80, y: 30, width: 420, height: 300 });
+  assert.deepEqual(resizeBounds({ x: 5, y: 15, width: 701, height: 561 }, 0.7, 0.7), { x: 5, y: 15, width: 702, height: 562 });
+});
+
+test('nearest corner works outside the rectangle, at negative coordinates, and at center ties', () => {
+  const bounds = { x: -900, y: -800, width: 400, height: 200 };
+  const cases = [
+    [{ x: -2000, y: -2000 }, 'nw'],
+    [{ x: 1000, y: -2000 }, 'ne'],
+    [{ x: -2000, y: 1000 }, 'sw'],
+    [{ x: 1000, y: 1000 }, 'se'],
+    [{ x: -700, y: -700 }, 'se'],
+    [{ x: -700, y: -701 }, 'ne'],
+    [{ x: -701, y: -700 }, 'sw'],
+  ];
+  for (const [cursor, expected] of cases) assert.equal(nearestCorner(bounds, cursor), expected);
 });
 
 test('the key chord starts without a click and polls the global cursor outside the panel', () => {
@@ -93,10 +118,12 @@ test('the key chord starts without a click and polls the global cursor outside t
   assert.equal(h.intervals.size, 1);
   assert.equal(h.cursorReads(), 1);
   assert.equal(h.classes.has('note-panel-modifier-resizing'), true);
+  h.tick();
+  assert.deepEqual(h.native.changes, []);
   // No DOM mouse event is sent: only the screen cursor provider changes.
   Object.assign(h.cursor, { x: 1100, y: -200 });
   h.tick();
-  assert.deepEqual(h.native.changes, [[{ x: -1080, y: 30, width: 2700, height: 300 }, false]]);
+  assert.deepEqual(h.native.changes, [[{ x: 200, y: -270, width: 420, height: 860 }, false]]);
   h.tick();
   assert.equal(h.native.changes.length, 1);
   h.event('keyup', { shiftKey: true, key: 'Alt' });
@@ -118,8 +145,8 @@ test('key repeat keeps the original cursor anchor and does not add polling loops
   h.tick();
   assert.equal(h.intervals.size, 1);
   assert.deepEqual(h.native.changes, [
-    [{ x: -130, y: 30, width: 800, height: 600 }, false],
-    [{ x: -160, y: 30, width: 860, height: 620 }, false],
+    [{ x: -30, y: 70, width: 650, height: 520 }, false],
+    [{ x: 0, y: 90, width: 620, height: 500 }, false],
   ]);
   h.interaction.dispose();
 });
@@ -159,7 +186,7 @@ test('focus loss stops polling and key repeat cannot resume without a new chord'
   h.start();
   Object.assign(h.cursor, { x: 240, y: 230 });
   h.tick();
-  assert.deepEqual(h.native.changes, [[{ x: -120, y: 30, width: 780, height: 590 }, false]]);
+  assert.deepEqual(h.native.changes, [[{ x: -40, y: 60, width: 660, height: 530 }, false]]);
   h.interaction.dispose();
 });
 
@@ -220,7 +247,7 @@ test('native close disposes every listener and style before a replacement is ins
   h.start();
   Object.assign(h.cursor, { x: 150, y: 140 });
   h.tick();
-  assert.deepEqual(h.native.changes, [[{ x: -130, y: 30, width: 800, height: 600 }, false]]);
+  assert.deepEqual(h.native.changes, [[{ x: -30, y: 70, width: 650, height: 520 }, false]]);
   replacement.dispose();
   h.interaction.dispose();
   assert.equal(h.domWindow.listenerCount(), 0);
@@ -255,5 +282,38 @@ test('native bounds failures stop polling and report the error once', () => {
   assert.equal(h.classes.size, 0);
   h.tick();
   assert.deepEqual(h.errors, [error]);
+  h.interaction.dispose();
+});
+
+test('the initial cursor picks every corner and shows the matching diagonal cursor', () => {
+  const cases = [
+    [{ x: 100, y: 100 }, { x: -50, y: 50, width: 670, height: 540 }, false],
+    [{ x: 500, y: 100 }, { x: -80, y: 50, width: 730, height: 540 }, true],
+    [{ x: 100, y: 500 }, { x: -50, y: 30, width: 670, height: 580 }, true],
+    [{ x: 500, y: 500 }, { x: -80, y: 30, width: 730, height: 580 }, false],
+  ];
+  for (const [cursor, expected, nesw] of cases) {
+    const h = harness();
+    Object.assign(h.cursor, cursor);
+    h.start();
+    assert.equal(h.classes.has('note-panel-modifier-resize-nesw'), nesw);
+    Object.assign(h.cursor, { x: cursor.x + 30, y: cursor.y + 20 });
+    h.tick();
+    assert.deepEqual(h.native.changes, [[expected, false]]);
+    h.interaction.cancel();
+    assert.equal(h.classes.size, 0);
+    h.interaction.dispose();
+  }
+});
+
+test('crossing the window center never switches the selected corner or its original anchor', () => {
+  const h = harness();
+  h.start();
+  Object.assign(h.cursor, { x: 500, y: 500 });
+  h.tick();
+  assert.deepEqual(h.native.changes, [[{ x: 200, y: 290, width: 420, height: 300 }, false]]);
+  Object.assign(h.cursor, { x: 180, y: 180 });
+  h.tick();
+  assert.deepEqual(h.native.changes[1], [{ x: 0, y: 110, width: 620, height: 480 }, false]);
   h.interaction.dispose();
 });
