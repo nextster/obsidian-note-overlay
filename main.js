@@ -31,6 +31,11 @@ module.exports = class PanelMicroDemo extends Plugin {
     this.addCommand({id:'toggle',name:'Toggle note panel',callback:()=>this.toggle().catch(e=>this.report(e))});
     this.addCommand({id:'choose-note',name:'Choose note in panel',callback:()=>this.openPicker().catch(e=>this.report(e))});
     this.addCommand({id:'new-tab',name:'New tab in note panel',callback:()=>this.newTab(true).catch(e=>this.report(e))});
+    this.addCommand({id:'toggle-sidebar',name:'Toggle note panel sidebar',checkCallback:checking=>{
+      if(!this.sidebar||this.app.workspace.getFocusedContainer()?.win!==this.panelWindow)return false;
+      if(!checking)this.toggleSidebar();
+      return true;
+    }});
     this.installPanelOpenHook();
     this.registerEvent(workspace.on('file-open',()=>this.queueSessionSave()));
     this.registerEvent(workspace.on('active-leaf-change',leaf=>{
@@ -42,6 +47,7 @@ module.exports = class PanelMicroDemo extends Plugin {
       this.queueSessionSave();
     }));
     this.registerEvent(workspace.on('layout-change',()=>this.queueSessionSave()));
+    for(const event of ['create','rename','delete'])this.registerEvent(this.app.vault.on(event,()=>this.queueSidebarRefresh()));
     this.server=http.createServer((req,res)=>this.handleRequest(req,res));
     this.server.on('error',error=>this.report(error));
     this.server.listen(51235,'127.0.0.1');
@@ -49,6 +55,7 @@ module.exports = class PanelMicroDemo extends Plugin {
   report(error){this.lastError=error?.message||String(error);console.error(error);new Notice('Note panel: '+this.lastError);}
   status(){const w=this.panel;return {ok:true,version:this.manifest.version,exists:!!w&&!w.isDestroyed(),
     tabs:this.getPanelLeaves().length,activeTab:this.getPanelLeaves().indexOf(this.activePanelLeaf()),
+    sidebarVisible:this.sidebar?.getState().visible||false,
     main:this.mainWindow?.status(this.mainWindowId)||null,
     native:w&&!w.isDestroyed()?JSON.parse(this.native.inspect(w.getNativeWindowHandle(),false)):null,error:this.lastError||null};}
   async handleRequest(req,res){
@@ -118,6 +125,7 @@ module.exports = class PanelMicroDemo extends Plugin {
   }
   queueSessionSave(){
     if(this.unloading||this.restoring||!this.panelContainer?.win||!this.getPanelLeaves().length)return;
+    this.sidebar?.syncActive();
     // Mark every native-created tab synchronously before Obsidian saves layout.
     this.syncPanelLeaves();
     clearTimeout(this.sessionTimer);
@@ -130,6 +138,7 @@ module.exports = class PanelMicroDemo extends Plugin {
     this.settings.tabs=leaves.map(leaf=>({file:leaf.view?.file?.path||null}));
     this.settings.activeTab=Math.max(0,leaves.indexOf(this.activePanelLeaf()));
     this.settings.panelLeafIds=Array.from(this.panelLeafIds);
+    if(this.sidebar)this.settings.sidebar=this.sidebar.getState();
     const file=this.activePanelLeaf()?.view?.file;
     if(file)this.settings.lastFile=file.path;
     await this.saveData(this.settings);
@@ -189,6 +198,7 @@ module.exports = class PanelMicroDemo extends Plugin {
       this.leaf=restored[Math.min(Math.max(0,this.settings.activeTab||0),restored.length-1)];
       this.app.workspace.setActiveLeaf(this.leaf,{focus:false});
       this.installToolbar();
+      this.installSidebar();
       this.installPanelKeys();
       const {installResize}=require(path.join(folder,'panel-resize.cjs'));
       this.resizeInteraction?.dispose();
@@ -204,19 +214,28 @@ module.exports = class PanelMicroDemo extends Plugin {
     const doc=this.panelWindow.document;
     doc.body.classList.add('note-panel-window');
     this.style=doc.createElement('style');this.style.textContent=`
-      .note-panel-window .workspace-tab-header-container{padding-right:30px}
+      .note-panel-window .workspace-tab-header-container{padding-right:30px!important}
+      .note-panel-window .workspace-tabs.mod-top-left-space .workspace-tab-header-container{padding-left:114px!important}
+      .note-panel-window:has(.note-panel-sidebar:not([hidden])) .workspace-tabs.mod-top-left-space .workspace-tab-header-container{padding-left:8px!important}
       .note-panel-window .workspace-tab-header-tab-list{display:none}
-      .note-panel-window .panel-note-picker{position:absolute;right:5px;top:7px;z-index:10;width:22px;height:22px;padding:3px;border:0;border-radius:4px;background:transparent;box-shadow:none;color:var(--text-muted);-webkit-app-region:no-drag}
-      .note-panel-window .panel-note-picker:hover{background:var(--background-modifier-hover);color:var(--text-normal)}
-      .note-panel-window .panel-note-picker svg{width:14px;height:14px}
+      .note-panel-window .panel-note-picker,.note-panel-window .panel-sidebar-toggle{position:absolute;top:7px;z-index:10;width:22px;height:22px;padding:3px;border:0;border-radius:4px;background:transparent;box-shadow:none;color:var(--text-muted);-webkit-app-region:no-drag}
+      .note-panel-window .panel-note-picker{right:5px}
+      .note-panel-window .panel-sidebar-toggle{left:84px}
+      .note-panel-window .panel-note-picker:hover,.note-panel-window .panel-sidebar-toggle:hover{background:var(--background-modifier-hover);color:var(--text-normal)}
+      .note-panel-window .panel-note-picker svg,.note-panel-window .panel-sidebar-toggle svg{width:14px;height:14px}
     `;doc.head.append(this.style);
     this.toolbar=doc.createElement('button');this.toolbar.className='panel-note-picker clickable-icon';
     this.toolbar.setAttribute('aria-label','Открыть заметку');this.toolbar.title='Открыть заметку';
     setIcon(this.toolbar,'file-search');
     this.toolbar.onclick=()=>void this.openPicker().catch(e=>this.report(e));
+    this.sidebarToggle=doc.createElement('button');this.sidebarToggle.className='panel-sidebar-toggle clickable-icon';
+    this.sidebarToggle.type='button';
+    this.sidebarToggle.onclick=()=>this.toggleSidebar();
     const workspace=doc.querySelector('.workspace');
     this.layout=workspace.parentElement;
     this.layout.append(this.toolbar);
+    this.layout.append(this.sidebarToggle);
+    this.updateSidebarToggle(false);
     const onTabClick=event=>{
       const target=event.target?.closest?.('.workspace-tab-header,.workspace-tab-header-new-tab');
       if(!target||event.button>1)return;
@@ -239,7 +258,41 @@ module.exports = class PanelMicroDemo extends Plugin {
     this.panelScope=new Scope(this.previousPanelScope);
     this.panelScope.register(['Mod'],'t',()=>{void this.newTab(true).catch(e=>this.report(e));return false;});
     this.panelScope.register(['Mod'],'w',()=>{void this.closeTab(this.activePanelLeaf()).catch(e=>this.report(e));return false;});
+    this.panelScope.register(['Mod','Shift'],'b',event=>{if(!event?.repeat)this.toggleSidebar();return false;});
     keymap.setWindowBaseScope(this.panelWindow,this.panelScope);
+  }
+  installSidebar(){
+    const folder=path.join(this.app.vault.adapter.getBasePath(),this.manifest.dir);
+    const {createNoteSidebar}=require(path.join(folder,'panel-sidebar.cjs'));
+    this.sidebar?.dispose();
+    this.sidebar=createNoteSidebar({
+      document:this.panelWindow.document,container:this.panelWindow.document.querySelector('.workspace'),
+      getFiles:()=>this.app.vault.getMarkdownFiles(),getActivePath:()=>this.activePanelLeaf()?.view.file?.path||null,
+      onOpen:file=>this.openNote(file).catch(error=>this.report(error)),setIcon,state:this.settings.sidebar,
+      focusEditor:()=>this.activePanelLeaf()?.view.editor?.focus(),
+      onStateChange:state=>{this.settings.sidebar=state;this.updateSidebarToggle(state.visible);this.queueSessionSave();}
+    });
+    this.updateSidebarToggle(this.sidebar.getState().visible);
+  }
+  updateSidebarToggle(visible){
+    if(!this.sidebarToggle)return;
+    const label=(visible?'Скрыть':'Открыть')+' боковую панель (⌘⇧B)';
+    this.sidebarToggle.title=label;
+    this.sidebarToggle.setAttribute('aria-label',label);
+    this.sidebarToggle.setAttribute('aria-expanded',String(visible));
+    setIcon(this.sidebarToggle,visible?'panel-left-close':'panel-left-open');
+  }
+  toggleSidebar(){
+    if(!this.sidebar)return;
+    const wasVisible=this.sidebar.getState().visible;
+    const hadFocus=this.sidebar.element.contains(this.panelWindow.document.activeElement);
+    this.sidebar.setVisible(!wasVisible);
+    if(wasVisible&&hadFocus)this.activePanelLeaf()?.view.editor?.focus();
+  }
+  queueSidebarRefresh(){
+    if(this.unloading||!this.sidebar)return;
+    clearTimeout(this.sidebarTimer);
+    this.sidebarTimer=setTimeout(()=>{if(!this.unloading)this.sidebar?.refresh();},50);
   }
   selectTab(leaf){return this.runAction(async()=>{
     if(!this.getPanelLeaves().includes(leaf))return;
@@ -309,9 +362,10 @@ module.exports = class PanelMicroDemo extends Plugin {
   hidePanel(){return this.runAction(()=>this._hidePanel());}
   async _hidePanel(){this.hideGeneration=(this.hideGeneration||0)+1;this.resizeInteraction?.cancel();this.picker?.close();await this.saveEditor();await this.persistSession();if(this.panel&&!this.panel.isDestroyed())this.panel.hide();}
   onunload(){
-    this.unloading=true;clearTimeout(this.boundsTimer);clearTimeout(this.sessionTimer);this.server?.close();try{this.popup?.disarm(this.openerId);}catch(_){}
+    this.unloading=true;clearTimeout(this.boundsTimer);clearTimeout(this.sessionTimer);clearTimeout(this.sidebarTimer);this.server?.close();try{this.popup?.disarm(this.openerId);}catch(_){}
     if(this.leafOpenHook&&WorkspaceLeaf.prototype.openFile===this.leafOpenHook)WorkspaceLeaf.prototype.openFile=this.originalLeafOpenFile;
     this.resizeInteraction?.dispose();
+    this.sidebar?.dispose();
     try{this.mainWindow?.release(this.mainWindowId);}catch(error){console.warn('Main window cleanup:',error);}
     // Restore shared methods synchronously: Obsidian does not await Component.onunload.
     const workspace=this.app.workspace;
@@ -323,7 +377,7 @@ module.exports = class PanelMicroDemo extends Plugin {
       panel.removeListener('resize',this.boundsHandler);panel.removeListener('moved',this.boundsHandler);
       if(this.app.keymap.getWindowStack(this.panelWindow).scope===this.panelScope)this.app.keymap.setWindowBaseScope(this.panelWindow,this.previousPanelScope);
     }
-    try{this.toolbar?.remove();this.style?.remove();this.panelWindow?.document.body.classList.remove('note-panel-window');}catch(_){}
+    try{this.toolbar?.remove();this.sidebarToggle?.remove();this.style?.remove();this.panelWindow?.document.body.classList.remove('note-panel-window');}catch(_){}
     // Drain an already-running action before the final save and snapshot.
     // Newly queued actions see unloading and cannot create another popout.
     const pending=[this.actionQueue,this.opening].filter(Boolean);

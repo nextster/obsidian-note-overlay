@@ -10,12 +10,14 @@ class NotePanelInstaller
   RECEIPT = '.note-panel-receipt.json'.freeze
   REGISTRY = 'vaults.json'.freeze
   FIXED_RUNTIME = %w[main.js manifest.json panel_bridge.node].freeze
-  HELPERS = %w[main-window.cjs popup-main.cjs session-layout.cjs panel-resize.cjs].freeze
+  HELPERS = %w[main-window.cjs popup-main.cjs session-layout.cjs panel-resize.cjs panel-sidebar.cjs].freeze
   RUNTIME_FILES = (FIXED_RUNTIME + HELPERS).freeze
 
   def initialize
     @payload = File.join(File.dirname(File.realpath(__FILE__)), PLUGIN_ID)
     @state = File.expand_path(ENV['NOTE_PANEL_STATE_DIR'] || File.join(Dir.home, 'Library/Application Support/Note Panel'))
+    # The override isolates direct QA runs; Homebrew uses the normal Obsidian directory.
+    @obsidian_config = File.expand_path(ENV['NOTE_PANEL_OBSIDIAN_CONFIG_DIR'] || File.join(Dir.home, 'Library/Application Support/obsidian'))
   end
 
   def run(arguments)
@@ -255,6 +257,16 @@ class NotePanelInstaller
   def install_registered
     registered = registered_vaults
     if registered.empty?
+      unless exists?(File.join(@state, REGISTRY))
+        known = available_known_vaults
+        if known.length == 1
+          puts 'Installing Note Panel in the only available known Obsidian vault.'
+          install_one(known.first)
+          return
+        end
+        # Remember an unresolved initial choice so upgrades cannot select a new vault.
+        save_registry([])
+      end
       puts 'Choose your vault with note-panel install, or run note-panel install "/path/to/vault".'
       return
     end
@@ -270,6 +282,26 @@ class NotePanelInstaller
       install_runtime(vault)
     end
     guidance
+  end
+
+  def available_known_vaults
+    config = File.join(@obsidian_config, 'obsidian.json')
+    return [] unless exists?(config)
+    directory!(@obsidian_config)
+    value = read_json(config)
+    unless value.is_a?(Hash) && value['vaults'].is_a?(Hash) && value['vaults'].values.all? { |entry| entry.is_a?(Hash) && entry['path'].is_a?(String) && entry['path'].start_with?('/') }
+      raise 'Invalid Obsidian vault list'
+    end
+    value['vaults'].values.each_with_object([]) do |entry, available|
+      begin
+        available << vault_path(entry['path'])
+      rescue StandardError
+        # Offline paths and unsupported/symlinked vault layouts are unavailable.
+      end
+    end.uniq
+  rescue StandardError
+    warn 'The Obsidian vault list is unavailable or invalid; choose your vault with note-panel install.'
+    []
   end
 
   def uninstall_one(path)

@@ -18,6 +18,8 @@ function fixture(t) {
   const payload = path.join(distribution, ID);
   const script = path.join(distribution, 'note-panel');
   const state = path.join(root, 'state');
+  const configDirectory = path.join(root, 'obsidian-config');
+  const environment = { ...process.env, NOTE_PANEL_STATE_DIR: state, NOTE_PANEL_OBSIDIAN_CONFIG_DIR: configDirectory };
   fs.mkdirSync(payload, { recursive: true });
   fs.copyFileSync(path.join(__dirname, 'scripts/note-panel'), script);
   fs.chmodSync(script, 0o755);
@@ -26,6 +28,7 @@ function fixture(t) {
     fs.writeFileSync(path.join(payload, 'main.js'), `version ${version}`);
     fs.writeFileSync(path.join(payload, 'panel_bridge.node'), `native ${version}`);
     fs.writeFileSync(path.join(payload, 'session-layout.cjs'), `helper ${version}`);
+    fs.writeFileSync(path.join(payload, 'panel-sidebar.cjs'), `sidebar ${version}`);
     fs.writeFileSync(path.join(payload, 'main.test.cjs'), 'not a runtime helper');
     fs.writeFileSync(path.join(payload, 'data.json'), 'not distributed settings');
   };
@@ -39,8 +42,12 @@ function fixture(t) {
     return destination;
   };
   const plugin = target => path.join(target, '.obsidian/plugins', ID);
+  const knownVaults = entries => {
+    fs.mkdirSync(configDirectory, { recursive: true });
+    fs.writeFileSync(path.join(configDirectory, 'obsidian.json'), JSON.stringify({ vaults: entries }));
+  };
   const command = (...args) => spawnSync(ruby, [script, ...args], {
-    env: { ...process.env, NOTE_PANEL_STATE_DIR: state }, encoding: 'utf8', timeout: 15_000,
+    env: environment, encoding: 'utf8', timeout: 15_000,
   });
   const ok = (...args) => {
     const result = command(...args);
@@ -53,7 +60,7 @@ function fixture(t) {
     return result;
   };
   const registry = () => JSON.parse(fs.readFileSync(path.join(state, 'vaults.json'), 'utf8')).vaults;
-  return { root, distribution, payload, script, state, writePayload, vault, plugin, command, ok, fail, registry };
+  return { root, distribution, payload, script, state, configDirectory, environment, knownVaults, writePayload, vault, plugin, command, ok, fail, registry };
 }
 
 const regression = (name, body) => test(name, { skip: !rubyAvailable && 'Ruby is unavailable' }, body);
@@ -262,7 +269,7 @@ regression('symlinked state directory, parent, registry, and source runtime are 
   const parentLink = path.join(f.root, 'State parent');
   fs.symlinkSync(outside, parentLink, 'dir');
   const parentResult = spawnSync(ruby, [f.script, 'install', vault], {
-    env: { ...process.env, NOTE_PANEL_STATE_DIR: path.join(parentLink, 'Nested') }, encoding: 'utf8',
+    env: { ...f.environment, NOTE_PANEL_STATE_DIR: path.join(parentLink, 'Nested') }, encoding: 'utf8',
   });
   assert.equal(parentResult.status, 1);
   assert.match(parentResult.stderr, /Refusing symlink/);
@@ -283,18 +290,123 @@ regression('a Homebrew-style executable symlink locates the sibling payload with
   fs.mkdirSync(path.dirname(binary));
   fs.symlinkSync(f.script, binary);
   const result = spawnSync(binary, ['install', vault], {
-    env: { ...process.env, NOTE_PANEL_STATE_DIR: f.state, PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 15_000,
+    env: { ...f.environment, PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 15_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.readFileSync(path.join(f.plugin(vault), 'main.js'), 'utf8'), 'version 0.6.0');
 });
 
-regression('initial registered install is noninteractive and empty registry needs no payload or state writes', t => {
+regression('initial registered install without known vaults initializes an empty registry without a payload or UI', t => {
   const f = fixture(t);
   fs.rmSync(f.payload, { recursive: true });
   assert.match(f.ok('install', '--registered').stdout, /note-panel install/);
-  assert.equal(fs.existsSync(f.state), false);
+  assert.deepEqual(f.registry(), []);
+  assert.equal(fs.statSync(f.state).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(path.join(f.state, 'vaults.json')).mode & 0o777, 0o600);
   assert.match(f.ok('--help').stdout, /--keep-registry/);
   f.ok('uninstall', '--all', '--keep-registry');
-  assert.equal(fs.existsSync(f.state), false);
+  assert.deepEqual(f.registry(), []);
+});
+
+regression('first registered install selects the sole available known vault and deduplicates canonical paths', t => {
+  const f = fixture(t), vault = f.vault(), alias = path.join(f.root, 'Vault alias');
+  fs.symlinkSync(vault, alias, 'dir');
+  const ordinary = path.join(f.root, 'Ordinary folder');
+  fs.mkdirSync(ordinary);
+  f.knownVaults({
+    primary: { path: vault, open: false, ts: 1 },
+    duplicate: { path: alias, open: true, ts: 100 },
+    offline: { path: path.join(f.root, 'Unavailable vault'), open: true, ts: 200 },
+    ordinary: { path: ordinary, open: true, ts: 300 },
+  });
+  const config = path.join(f.configDirectory, 'obsidian.json');
+  const originalConfig = fs.readFileSync(config, 'utf8');
+  const result = f.ok('install', '--registered');
+  assert.match(result.stdout, /only available known Obsidian vault/);
+  assert.deepEqual(f.registry(), [vault]);
+  assert.equal(fs.readFileSync(path.join(f.plugin(vault), 'main.js'), 'utf8'), 'version 0.6.0');
+  assert.equal(fs.existsSync(path.join(f.root, 'Unavailable vault')), false);
+  assert.equal(fs.existsSync(path.join(ordinary, '.obsidian')), false);
+  assert.equal(fs.readFileSync(config, 'utf8'), originalConfig, 'discovery never changes Obsidian config');
+  assert.equal(fs.readFileSync(path.join(vault, '.obsidian/community-plugins.json'), 'utf8'), '["another-plugin"]');
+  assert.equal(fs.readFileSync(path.join(vault, '.obsidian/hotkeys.json'), 'utf8'), '{"custom":true}');
+});
+
+regression('an ambiguous first install records no choice and upgrades never rediscover a later sole vault', t => {
+  const f = fixture(t), first = f.vault('First known vault'), second = f.vault('Second known vault');
+  f.knownVaults({ first: { path: first }, second: { path: second } });
+  assert.match(f.ok('install', '--registered').stdout, /note-panel install/);
+  assert.deepEqual(f.registry(), []);
+  assert.equal(fs.existsSync(f.plugin(first)), false);
+  assert.equal(fs.existsSync(f.plugin(second)), false);
+  f.knownVaults({ first: { path: first } });
+  assert.match(f.ok('install', '--registered').stdout, /note-panel install/);
+  assert.deepEqual(f.registry(), []);
+  assert.equal(fs.existsSync(f.plugin(first)), false);
+  // Manual selection remains possible after the unresolved first run.
+  f.ok('install', first);
+  f.ok('uninstall', first);
+  f.ok('install', '--registered');
+  assert.deepEqual(f.registry(), []);
+  assert.equal(fs.existsSync(f.plugin(first)), false, 'explicit uninstall also prevents rediscovery');
+});
+
+regression('existing registrations update their markers and ignore a different sole known vault', t => {
+  const f = fixture(t), registered = f.vault('Registered vault'), known = f.vault('Known vault');
+  f.ok('install', registered);
+  f.knownVaults({ known: { path: known } });
+  f.writePayload('0.6.1');
+  f.ok('install', '--registered');
+  assert.equal(fs.readFileSync(path.join(f.plugin(registered), 'main.js'), 'utf8'), 'version 0.6.1');
+  assert.equal(fs.existsSync(f.plugin(known)), false);
+  fs.rmSync(f.plugin(registered), { recursive: true });
+  assert.match(f.ok('install', '--registered').stderr, /marker is missing/);
+  assert.deepEqual(f.registry(), [registered]);
+  assert.equal(fs.existsSync(f.plugin(known)), false);
+});
+
+regression('malformed Obsidian configs initialize an empty choice without mutating any vault or config', t => {
+  for (const value of ['not json', '[]', '{"vaults":[]}', '{"vaults":{"broken":null}}', '{"vaults":{"broken":{"path":"relative/vault"}}}']) {
+    const f = fixture(t), vault = f.vault();
+    fs.mkdirSync(f.configDirectory);
+    const config = path.join(f.configDirectory, 'obsidian.json');
+    fs.writeFileSync(config, value);
+    const result = f.ok('install', '--registered');
+    assert.match(result.stdout, /note-panel install/);
+    assert.match(result.stderr, /vault list is unavailable or invalid/);
+    assert.deepEqual(f.registry(), []);
+    assert.equal(fs.existsSync(f.plugin(vault)), false);
+    assert.equal(fs.readFileSync(config, 'utf8'), value);
+  }
+});
+
+regression('initial discovery skips symlinked plugin layouts and refuses a symlinked Obsidian config', t => {
+  const f = fixture(t), unsafe = f.vault('Unsupported vault'), usable = f.vault('Usable vault');
+  const outside = path.join(f.root, 'Outside plugins');
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, path.join(unsafe, '.obsidian/plugins'), 'dir');
+  f.knownVaults({ unsafe: { path: unsafe }, usable: { path: usable } });
+  f.ok('install', '--registered');
+  assert.deepEqual(f.registry(), [usable]);
+  assert.deepEqual(fs.readdirSync(outside), []);
+  const other = fixture(t), vault = other.vault();
+  other.knownVaults({ vault: { path: vault } });
+  const config = path.join(other.configDirectory, 'obsidian.json');
+  const target = path.join(other.root, 'external-config.json');
+  fs.renameSync(config, target);
+  fs.symlinkSync(target, config);
+  assert.match(other.ok('install', '--registered').stderr, /vault list is unavailable or invalid/);
+  assert.deepEqual(other.registry(), []);
+  assert.equal(fs.existsSync(other.plugin(vault)), false);
+});
+
+regression('malformed installer registry fails before discovery or any state and vault mutation', t => {
+  const f = fixture(t), vault = f.vault();
+  f.knownVaults({ vault: { path: vault } });
+  fs.mkdirSync(f.state);
+  const registry = path.join(f.state, 'vaults.json');
+  fs.writeFileSync(registry, '{"version":1,"vaults":"invalid"}');
+  assert.match(f.fail('install', '--registered').stderr, /Invalid vault registry/);
+  assert.equal(fs.readFileSync(registry, 'utf8'), '{"version":1,"vaults":"invalid"}');
+  assert.equal(fs.existsSync(f.plugin(vault)), false);
 });

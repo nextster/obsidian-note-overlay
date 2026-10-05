@@ -4,6 +4,8 @@ A macOS floating panel for Obsidian's real Markdown editor and Live Preview. Kee
 
 - Native tabs support multiple notes in the same panel.
 - The compact note-picker icon replaces the two large toolbar buttons.
+- **Cmd+Shift+B** shows or hides a folder tree in the panel. Click a note to open it in the current tab. The panel remembers sidebar visibility and expanded folders; **Cmd+B** keeps its normal bold formatting behavior.
+- The sidebar icon next to the window controls also opens or closes the folder tree.
 - While the panel is focused, hold **Shift** and move the mouse to move the panel, without clicking. Its size stays fixed. The pointer can be anywhere on screen.
 - While the panel is focused, hold **Shift+Option** and move the mouse to resize it, without clicking. The pointer can be anywhere on screen. The corner nearest to the pointer when the shortcut is pressed follows the mouse; the opposite corner stays fixed.
 - Press or release Option while holding Shift to switch between moving and resizing without a jump. Release Shift or switch focus to stop both modes. Option alone does not move the panel.
@@ -18,10 +20,17 @@ This plugin is macOS only (macOS 13 or newer). Its integration targets Obsidian 
 
 ```sh
 brew install --cask nextster/tap/obsidian-note-panel
+```
+
+On the first installation, Homebrew automatically installs the plugin if Obsidian knows exactly one available vault. Automatic detection supports vaults with the default `.obsidian` configuration folder.
+
+If there are several vaults, or none can be detected, Homebrew asks you to finish setup with:
+
+```sh
 note-panel install
 ```
 
-The second command opens a folder chooser for your Obsidian vault. You can also pass a vault path directly: `note-panel install "/path/to/your/vault"`. Enable **Note Panel** in Obsidian's Community plugins settings and restart Obsidian.
+This command opens a folder chooser. You can also pass a vault path directly: `note-panel install "/path/to/your/vault"`. Enable **Note Panel** in Obsidian's Community plugins settings and restart Obsidian. Homebrew installation never opens a dialog or starts Obsidian.
 
 Upgrade the plugin in registered vaults with:
 
@@ -29,7 +38,7 @@ Upgrade the plugin in registered vaults with:
 brew upgrade --cask nextster/tap/obsidian-note-panel
 ```
 
-Restart Obsidian after an update. Homebrew remembers the vaults you selected and updates only its registered installations.
+Restart Obsidian after an update. Homebrew remembers the vaults you selected and updates only its registered installations. If you removed the last registered vault or have not chosen one yet, updates do not select a different vault automatically; use `note-panel install` to make a new choice.
 
 To remove the plugin from one vault and stop managing it with Homebrew:
 
@@ -121,6 +130,6 @@ npm test
 npm run package
 ```
 
-The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.5.2.zip`. It contains the runtime `panel-micro-demo` directory and the `note-panel` vault installer. CI runs regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
+The result is `~/Library/Developer/Xcode/DerivedData/ObsidianNotePanel/releases/note-panel-0.5.3.zip`. It contains the runtime `panel-micro-demo` directory and the `note-panel` vault installer. CI runs regression tests, builds a universal native bridge on macOS, checks its architectures and export, and uploads an installation archive. Runtime checks in Obsidian are separate from these automated checks.
 
-To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.5.2`. The release workflow builds and publishes the ZIP after tests pass. Update `nextster/homebrew-tap` with the published archive's SHA256 checksum.
+To publish a release, update `manifest.json`, `package.json`, and `versions.json`, then push a tag equal to the manifest version, such as `0.5.3`. The release workflow builds and publishes the ZIP after tests pass. Update `nextster/homebrew-tap` with the published archive's SHA256 checksum.

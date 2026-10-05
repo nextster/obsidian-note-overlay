@@ -10,7 +10,10 @@ class WorkspaceLeaf {
 }
 class Plugin {}
 class FuzzySuggestModal {}
-class Scope {}
+class Scope {
+  constructor(parent){this.parent=parent;this.keys=[];}
+  register(modifiers,key,callback){this.keys.push({modifiers,key,callback});}
+}
 const exported={exports:{}};
 vm.runInNewContext(fs.readFileSync(require.resolve('./main.js'),'utf8'),{
   module:exported,require:name=>name==='obsidian'?{Plugin,TFile,WorkspaceLeaf,FuzzySuggestModal,Scope,Notice:class{},setIcon(){}}:require(name),
@@ -43,6 +46,32 @@ function fixture(files=['qa-one.md','qa-two.md']) {
 }
 async function externalOpen(p,leaf,file,options){const result=await leaf.openFile(file,options);await p.actionQueue;return result;}
 (async()=>{
+  {
+    const {p,group}=fixture();
+    const previous={};let scope;
+    p.app.keymap={getWindowStack:()=>({scope:previous}),setWindowBaseScope:(win,value)=>{assert.equal(win,p.panelWindow);scope=value;}};
+    let toggles=0;p.toggleSidebar=()=>toggles++;
+    p.installPanelKeys();
+    assert.equal(scope.parent,previous,'panel shortcuts retain the normal parent scope');
+    const sidebarKey=scope.keys.find(binding=>binding.key==='b');
+    assert.deepEqual(Array.from(sidebarKey.modifiers),['Mod','Shift']);
+    assert.equal(scope.keys.some(binding=>binding.key==='b'&&binding.modifiers.length===1),false,'Cmd+B remains available for editor bold');
+    assert.equal(sidebarKey.callback({repeat:false}),false,'sidebar shortcut consumes the event in the panel');
+    sidebarKey.callback({repeat:true});
+    assert.equal(toggles,1,'holding the shortcut must not repeatedly toggle the sidebar');
+    assert.equal(group.children.length,2,'sidebar shortcut does not create tabs');
+  }
+  {
+    const {p}=fixture();let focused=false;
+    let state={visible:false,expandedFolders:['folder']};
+    p.panelWindow.document={activeElement:{}};
+    p.sidebar={getState:()=>state,setVisible:visible=>{state={...state,visible};},element:{contains:()=>focused}};
+    let editorFocus=0;p.leaf.view.editor.focus=()=>editorFocus++;
+    p.toggleSidebar();assert.equal(state.visible,true);assert.equal(editorFocus,0,'showing sidebar preserves editor focus');
+    await p.persistSession();assert.equal(p.settings.sidebar.visible,true);
+    focused=true;p.toggleSidebar();assert.equal(state.visible,false);assert.equal(editorFocus,1,'hiding a focused sidebar restores editor focus');
+    await p.persistSession();assert.deepEqual(p.settings.sidebar.expandedFolders,['folder']);
+  }
   {
     const {p,events,group,workspace}=fixture();
     await p.selectTab(group.children[1]);
